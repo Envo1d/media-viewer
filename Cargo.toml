@@ -10,7 +10,7 @@ image = { version = "0.25.10" }
 walkdir = { version = "2.5.0" }
 open = { version = "5.3.3" }
 rusqlite = { version = "0.39.0", features = ["bundled"] }
-native-dialog = { version = "0.9.6" }
+rfd = { version = "0.17.2" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149" }
 directories = { version = "6.0.0" }

@@ -1,6 +1,9 @@
 use crate::db::Database;
 use crate::models::{MediaItem, MediaType};
 use crate::utils::config::AppConfig;
+use egui::TextureHandle;
+use rfd::FileDialog;
+use std::collections::HashMap;
 use walkdir::WalkDir;
 
 pub(crate) struct App {
@@ -9,6 +12,8 @@ pub(crate) struct App {
     page: usize,
     db: Database,
     config: AppConfig,
+    show_settings: Option<bool>,
+    texture_cache: HashMap<String, TextureHandle>,
 }
 
 impl Default for App {
@@ -22,6 +27,8 @@ impl Default for App {
             page: 0,
             config,
             db,
+            show_settings: None,
+            texture_cache: HashMap::new(),
         }
     }
 }
@@ -45,7 +52,46 @@ impl App {
             search_input: String::new(),
             page: 0,
             db,
+            show_settings: None,
+            texture_cache: HashMap::new(),
         }
+    }
+
+    fn get_texture(&mut self, ctx: &egui::Context, path: &str) -> egui::TextureHandle {
+        use image::{GenericImage, Rgba, RgbaImage};
+
+        if let Some(tex) = self.texture_cache.get(path) {
+            return tex.clone();
+        }
+
+        let img = match image::open(path) {
+            Ok(img) => img.to_rgba8(),
+            Err(_) => RgbaImage::new(120, 120), // пустой placeholder
+        };
+
+        let target_size = 120;
+
+        let scaled = image::imageops::thumbnail(&img, target_size, target_size);
+
+        let mut final_img =
+            RgbaImage::from_pixel(target_size, target_size, Rgba([200, 200, 200, 255]));
+
+        let x_offset = (target_size - scaled.width()) / 2;
+        let y_offset = (target_size - scaled.height()) / 2;
+
+        final_img.copy_from(&scaled, x_offset, y_offset).unwrap();
+
+        let pixels: Vec<_> = final_img.pixels().flat_map(|p| p.0).collect();
+        let size = [target_size as usize, target_size as usize];
+
+        let texture = ctx.load_texture(
+            path,
+            egui::ColorImage::from_rgba_unmultiplied(size, &pixels),
+            Default::default(),
+        );
+
+        self.texture_cache.insert(path.to_string(), texture.clone());
+        texture
     }
 
     fn scan(&mut self) {
@@ -116,17 +162,8 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Путь:");
-                let response = ui.text_edit_singleline(&mut self.root_path);
-
-                if response.changed() {
-                    self.config.library_path = Some(self.root_path.clone().into());
-                    let _ = self.config.save();
-                }
-
-                if ui.button("Сканировать").clicked() {
-                    self.scan();
-                    self.page = 0;
+                if ui.button("Настройки").clicked() {
+                    self.show_settings = Some(true);
                 }
             });
 
@@ -135,6 +172,41 @@ impl eframe::App for App {
                 ui.text_edit_singleline(&mut self.search_input);
             });
         });
+
+        if let Some(mut open) = self.show_settings.take() {
+            egui::Window::new("Настройки")
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Путь к библиотеке:");
+                        ui.label(&self.root_path);
+
+                        if ui.button("Выбрать папку").clicked() {
+                            if let Some(folder) = FileDialog::new()
+                                .set_directory(&self.root_path)
+                                .pick_folder()
+                            {
+                                self.root_path = folder.to_string_lossy().to_string();
+                                self.config.library_path = Some(folder.into());
+                                let _ = self.config.save();
+                            }
+                        }
+                    });
+
+                    if ui.button("Сканировать").clicked() {
+                        self.scan();
+                        self.page = 0;
+                    }
+                });
+
+            if open {
+                self.show_settings = Some(true);
+            } else {
+                self.show_settings = None;
+            }
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let items_per_page = 20;
@@ -161,7 +233,8 @@ impl eframe::App for App {
                         ui.group(|ui| {
                             ui.set_min_size(egui::vec2(120.0, 120.0));
 
-                            ui.label("🖼 / 🎬");
+                            let texture = self.get_texture(ctx, &item.path);
+                            ui.image(&texture);
                             ui.label(&item.name);
 
                             if ui.button("Открыть").clicked() {

@@ -5,8 +5,6 @@ use walkdir::WalkDir;
 
 pub(crate) struct App {
     root_path: String,
-    filter_category: String,
-    filter_author: String,
     search_input: String,
     page: usize,
     db: Database,
@@ -20,8 +18,6 @@ impl Default for App {
         let db = Database::new(&db_path);
         Self {
             root_path: String::from("S:\\test"),
-            filter_category: String::new(),
-            filter_author: String::new(),
             search_input: String::new(),
             page: 0,
             config,
@@ -46,8 +42,6 @@ impl App {
         Self {
             config,
             root_path,
-            filter_category: String::new(),
-            filter_author: String::new(),
             search_input: String::new(),
             page: 0,
             db,
@@ -137,12 +131,6 @@ impl eframe::App for App {
             });
 
             ui.horizontal(|ui| {
-                ui.label("Категория:");
-                ui.text_edit_singleline(&mut self.filter_category);
-
-                ui.label("Автор:");
-                ui.text_edit_singleline(&mut self.filter_author);
-
                 ui.label("Поиск:");
                 ui.text_edit_singleline(&mut self.search_input);
             });
@@ -153,15 +141,7 @@ impl eframe::App for App {
             let offset = self.page * items_per_page;
 
             let (page_items, total) = if self.search_input.trim().is_empty() {
-                (
-                    self.db.query(
-                        &self.filter_category,
-                        &self.filter_author,
-                        items_per_page,
-                        offset,
-                    ),
-                    self.db.count(&self.filter_category, &self.filter_author),
-                )
+                (self.db.query(items_per_page, offset), self.db.count())
             } else {
                 (
                     self.db.search(&self.search_input, items_per_page, offset),
@@ -195,13 +175,13 @@ impl eframe::App for App {
             ui.separator();
 
             ui.horizontal(|ui| {
-                if ui.button("←").clicked() && self.page > 0 {
+                if ui.button("<").clicked() && self.page > 0 {
                     self.page -= 1;
                 }
 
                 ui.label(format!("Страница {} / {}", self.page + 1, max_page + 1));
 
-                if ui.button("→").clicked() && self.page < max_page {
+                if ui.button(">").clicked() && self.page < max_page {
                     self.page += 1;
                 }
             });

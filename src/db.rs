@@ -1,6 +1,6 @@
 use crate::db_migrations::{init_schema_version, run_migrations};
-use crate::models::{MediaItem, MediaType};
-use crate::utils::functions::build_search_query;
+use crate::models::MediaItem;
+use crate::utils::functions::{build_search_query, map_media_item};
 use rusqlite::{params, Connection};
 use std::collections::HashSet;
 
@@ -45,53 +45,21 @@ impl Database {
             .unwrap();
     }
 
-    pub fn query(
-        &self,
-        category: &str,
-        author: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Vec<MediaItem> {
+    pub fn query(&self, limit: usize, offset: usize) -> Vec<MediaItem> {
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT path, name, category, author, media_type, modified
          FROM media
-         WHERE category LIKE ?1 AND author LIKE ?2
          ORDER BY name
-         LIMIT ?3 OFFSET ?4",
+         LIMIT ?1 OFFSET ?2",
             )
             .unwrap();
 
-        let category_pattern = format!("%{}%", category.to_lowercase());
-        let author_pattern = format!("%{}%", author.to_lowercase());
-
         let rows = stmt
             .query_map(
-                rusqlite::params![
-                    category_pattern,
-                    author_pattern,
-                    limit as i64,
-                    offset as i64
-                ],
-                |row| {
-                    let media_type_str: String = row.get(4)?;
-
-                    let media_type = match media_type_str.as_str() {
-                        "Image" => MediaType::Image,
-                        "Video" => MediaType::Video,
-                        _ => MediaType::Image,
-                    };
-
-                    Ok(MediaItem {
-                        path: row.get(0)?,
-                        name: row.get(1)?,
-                        category: row.get(2)?,
-                        author: row.get(3)?,
-                        media_type,
-                        modified: row.get(5)?,
-                    })
-                },
+                rusqlite::params![limit as i64, offset as i64],
+                map_media_item,
             )
             .unwrap();
 
@@ -116,46 +84,18 @@ impl Database {
         let rows = stmt
             .query_map(
                 rusqlite::params![query, limit as i64, offset as i64],
-                |row| {
-                    let media_type_str: String = row.get(4)?;
-
-                    let media_type = match media_type_str.as_str() {
-                        "Image" => MediaType::Image,
-                        "Video" => MediaType::Video,
-                        _ => MediaType::Image,
-                    };
-
-                    Ok(MediaItem {
-                        path: row.get(0)?,
-                        name: row.get(1)?,
-                        category: row.get(2)?,
-                        author: row.get(3)?,
-                        media_type,
-                        modified: row.get(5)?,
-                    })
-                },
+                map_media_item,
             )
             .unwrap();
 
         rows.filter_map(Result::ok).collect()
     }
 
-    pub fn count(&self, category: &str, author: &str) -> usize {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT COUNT(*) FROM media
-         WHERE category LIKE ?1 AND author LIKE ?2",
-            )
-            .unwrap();
-
-        let category_pattern = format!("%{}%", category.to_lowercase());
-        let author_pattern = format!("%{}%", author.to_lowercase());
+    pub fn count(&self) -> usize {
+        let mut stmt = self.conn.prepare("SELECT COUNT(*) FROM media").unwrap();
 
         let count: i64 = stmt
-            .query_row(rusqlite::params![category_pattern, author_pattern], |row| {
-                row.get(0)
-            })
+            .query_row(rusqlite::params![], |row| row.get(0))
             .unwrap();
 
         count as usize
@@ -178,25 +118,29 @@ impl Database {
         count as usize
     }
 
-    pub fn delete_missing(&self, existing_paths: &[String]) {
+    pub fn delete_missing(&mut self, existing_paths: &[String]) {
         let existing_set: HashSet<&String> = existing_paths.iter().collect();
 
-        let mut stmt = self.conn.prepare("SELECT path FROM media").unwrap();
-        let db_paths: Vec<String> = stmt
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .filter_map(Result::ok)
-            .collect();
+        let paths_to_delete: Vec<String> = {
+            let mut stmt = self.conn.prepare("SELECT path FROM media").unwrap();
+            let iter = stmt.query_map([], |row| row.get::<_, String>(0)).unwrap();
 
-        let mut delete_media = self
-            .conn
-            .prepare("DELETE FROM media WHERE path = ?1")
-            .unwrap();
+            iter.filter_map(Result::ok)
+                .filter(|path| !existing_set.contains(path))
+                .collect()
+        };
 
-        for path in db_paths {
-            if !existing_set.contains(&path) {
-                delete_media.execute(rusqlite::params![path]).unwrap();
+        if paths_to_delete.is_empty() {
+            return;
+        }
+
+        let tx = self.conn.transaction().unwrap();
+        {
+            let mut del_stmt = tx.prepare("DELETE FROM media WHERE path = ?1").unwrap();
+            for path in paths_to_delete {
+                del_stmt.execute(params![path]).ok();
             }
         }
+        tx.commit().unwrap();
     }
 }

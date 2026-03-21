@@ -1,8 +1,8 @@
-use crate::db_migrations::{init_schema_version, run_migrations};
-use crate::models::MediaItem;
-use crate::utils::functions::{build_search_query, map_media_item};
+use crate::utils::query_builder::{build_search_query, map_media_item};
 use rusqlite::{params, Connection};
 use std::collections::HashSet;
+use crate::core::models::MediaItem;
+use crate::data::migrations::{init_schema_version, run_migrations};
 
 pub struct Database {
     conn: Connection,

@@ -1,8 +1,8 @@
-use crate::ui::App;
+use crate::ui::app::MediaApp;
 
-mod db;
-mod db_migrations;
-mod models;
+mod core;
+mod data;
+mod infra;
 mod ui;
 mod utils;
 
@@ -12,6 +12,6 @@ fn main() {
     let _ = eframe::run_native(
         "Media Viewer",
         options,
-        Box::new(|cc| Ok(Box::new(App::new(cc)))),
+        Box::new(|cc| Ok(Box::new(MediaApp::new(cc)))),
     );
 }

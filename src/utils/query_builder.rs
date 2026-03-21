@@ -1,4 +1,4 @@
-use crate::models::{MediaItem, MediaType};
+use crate::core::models::{MediaItem, MediaType};
 
 pub fn build_search_query(input: &str) -> String {
     input

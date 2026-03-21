@@ -14,3 +14,4 @@ rfd = { version = "0.17.2" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149" }
 directories = { version = "6.0.0" }
+sha2 = { version = "0.10.9" }

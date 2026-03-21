@@ -1,7 +1,9 @@
 use crate::db::Database;
 use crate::models::{MediaItem, MediaType};
+use crate::utils::cache::{get_cache_dir, preview_cache_path};
 use crate::utils::config::AppConfig;
 use egui::TextureHandle;
+use image::{DynamicImage, GenericImage, Rgba, RgbaImage};
 use rfd::FileDialog;
 use std::collections::HashMap;
 use walkdir::WalkDir;
@@ -58,32 +60,38 @@ impl App {
     }
 
     fn get_texture(&mut self, ctx: &egui::Context, path: &str) -> egui::TextureHandle {
-        use image::{GenericImage, Rgba, RgbaImage};
-
         if let Some(tex) = self.texture_cache.get(path) {
             return tex.clone();
         }
 
-        let img = match image::open(path) {
-            Ok(img) => img.to_rgba8(),
-            Err(_) => RgbaImage::new(120, 120), // пустой placeholder
+        let cache_dir = get_cache_dir();
+        let cache_path = preview_cache_path(&cache_dir, path);
+
+        let final_img: RgbaImage = if cache_path.exists() {
+            image::open(&cache_path)
+                .unwrap_or_else(|_| DynamicImage::from(RgbaImage::new(120, 120)))
+                .to_rgba8()
+        } else {
+            let img = image::open(path)
+                .unwrap_or_else(|_| DynamicImage::from(RgbaImage::new(120, 120)))
+                .to_rgba8();
+
+            let target_size = 120;
+            let scaled = image::imageops::thumbnail(&img, target_size, target_size);
+
+            let mut canvas =
+                RgbaImage::from_pixel(target_size, target_size, Rgba([200, 200, 200, 255]));
+            let x_offset = (target_size - scaled.width()) / 2;
+            let y_offset = (target_size - scaled.height()) / 2;
+            canvas.copy_from(&scaled, x_offset, y_offset).unwrap();
+
+            let _ = canvas.save(&cache_path);
+
+            canvas
         };
 
-        let target_size = 120;
-
-        let scaled = image::imageops::thumbnail(&img, target_size, target_size);
-
-        let mut final_img =
-            RgbaImage::from_pixel(target_size, target_size, Rgba([200, 200, 200, 255]));
-
-        let x_offset = (target_size - scaled.width()) / 2;
-        let y_offset = (target_size - scaled.height()) / 2;
-
-        final_img.copy_from(&scaled, x_offset, y_offset).unwrap();
-
         let pixels: Vec<_> = final_img.pixels().flat_map(|p| p.0).collect();
-        let size = [target_size as usize, target_size as usize];
-
+        let size = [final_img.width() as usize, final_img.height() as usize];
         let texture = ctx.load_texture(
             path,
             egui::ColorImage::from_rgba_unmultiplied(size, &pixels),

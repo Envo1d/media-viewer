@@ -79,6 +79,7 @@ pub fn run_migrations(tx: &Transaction) {
         set_version(tx, version);
     }
 
+    // === MIGRATION 4 ===
     if version < 4 {
         tx.execute(
             "CREATE VIRTUAL TABLE media_fts USING fts5(
@@ -119,6 +120,21 @@ pub fn run_migrations(tx: &Transaction) {
         .unwrap();
 
         version = 4;
+        set_version(tx, version);
+    }
+
+    // === MIGRATION 5 ===
+    if version < 5 {
+        tx.execute(
+            "ALTER TABLE media ADD COLUMN last_seen_scan INTEGER DEFAULT 0",
+            [],
+        )
+        .unwrap();
+
+        tx.execute("CREATE INDEX idx_last_seen ON media(last_seen_scan)", [])
+            .unwrap();
+
+        version = 5;
         set_version(tx, version);
     }
 }

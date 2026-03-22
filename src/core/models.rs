@@ -1,3 +1,5 @@
+use egui::TextureHandle;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MediaItem {
     pub path: String,
@@ -5,11 +7,22 @@ pub struct MediaItem {
     pub media_type: MediaType,
     pub category: String,
     pub author: String,
-    pub modified: i64
+    pub modified: i64,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MediaType {
     Image,
     Video,
+}
+
+#[derive(Clone)]
+pub enum ScanEvent {
+    Item(MediaItem),
+    Finished,
+}
+
+pub enum ThumbnailState {
+    Loading,
+    Ready(TextureHandle),
 }

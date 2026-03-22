@@ -1,15 +1,17 @@
-use crate::utils::query_builder::{build_search_query, map_media_item};
-use rusqlite::{params, Connection};
-use std::collections::HashSet;
 use crate::core::models::MediaItem;
 use crate::data::migrations::{init_schema_version, run_migrations};
+use crate::infra::config::AppConfig;
+use crate::utils::query_builder::{build_search_query, map_media_item};
+use rusqlite::Connection;
 
 pub struct Database {
     conn: Connection,
 }
 
 impl Database {
-    pub fn new(path: &str) -> Self {
+    pub fn new() -> Self {
+        let path = AppConfig::get_db_path();
+
         let mut conn = Connection::open(path).unwrap();
 
         let tx = conn.transaction().unwrap();
@@ -22,27 +24,37 @@ impl Database {
         Self { conn }
     }
 
-    pub fn upsert(&self, item: &MediaItem) {
-        self.conn
-            .execute(
-                "INSERT INTO media (path, name, category, author, media_type, modified)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+    pub fn upsert_batch(&mut self, items: &[MediaItem], scan_id: i64) {
+        let tx = self.conn.transaction().unwrap();
+
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO media (path, name, category, author, media_type, modified, last_seen_scan)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(path) DO UPDATE SET
                 name=excluded.name,
                 category=excluded.category,
                 author=excluded.author,
                 media_type=excluded.media_type,
-                modified=excluded.modified",
-                params![
+                modified=excluded.modified,
+                last_seen_scan=?7"
+            ).unwrap();
+
+            for item in items {
+                stmt.execute(rusqlite::params![
                     item.path,
                     item.name,
                     item.category,
                     item.author,
                     format!("{:?}", item.media_type),
-                    item.modified
-                ],
-            )
-            .unwrap();
+                    item.modified,
+                    scan_id
+                ])
+                .ok();
+            }
+        }
+
+        tx.commit().unwrap();
     }
 
     pub fn query(&self, limit: usize, offset: usize) -> Vec<MediaItem> {
@@ -91,56 +103,12 @@ impl Database {
         rows.filter_map(Result::ok).collect()
     }
 
-    pub fn count(&self) -> usize {
-        let mut stmt = self.conn.prepare("SELECT COUNT(*) FROM media").unwrap();
-
-        let count: i64 = stmt
-            .query_row(rusqlite::params![], |row| row.get(0))
-            .unwrap();
-
-        count as usize
-    }
-
-    pub fn search_count(&self, input: &str) -> usize {
-        let query = build_search_query(input);
-
-        let count: i64 = self
-            .conn
-            .query_row(
-                "SELECT COUNT(*)
-         FROM media_fts
-         WHERE media_fts MATCH ?1",
-                rusqlite::params![query],
-                |row| row.get(0),
+    pub fn delete_not_seen(&self, scan_id: i64) {
+        self.conn
+            .execute(
+                "DELETE FROM media WHERE last_seen_scan != ?1",
+                rusqlite::params![scan_id],
             )
-            .unwrap();
-
-        count as usize
-    }
-
-    pub fn delete_missing(&mut self, existing_paths: &[String]) {
-        let existing_set: HashSet<&String> = existing_paths.iter().collect();
-
-        let paths_to_delete: Vec<String> = {
-            let mut stmt = self.conn.prepare("SELECT path FROM media").unwrap();
-            let iter = stmt.query_map([], |row| row.get::<_, String>(0)).unwrap();
-
-            iter.filter_map(Result::ok)
-                .filter(|path| !existing_set.contains(path))
-                .collect()
-        };
-
-        if paths_to_delete.is_empty() {
-            return;
-        }
-
-        let tx = self.conn.transaction().unwrap();
-        {
-            let mut del_stmt = tx.prepare("DELETE FROM media WHERE path = ?1").unwrap();
-            for path in paths_to_delete {
-                del_stmt.execute(params![path]).ok();
-            }
-        }
-        tx.commit().unwrap();
+            .ok();
     }
 }

@@ -1,11 +1,17 @@
+use crate::core::models::{MediaItem, ScanEvent};
 use crate::core::scanner::MediaScanner;
 use crate::data::db::Database;
 use crate::infra::config::AppConfig;
 use crate::ui::texture_manager::TextureManager;
+use crossbeam_channel::Receiver;
 use rfd::FileDialog;
+use std::collections::HashSet;
+
+const ITEMS_PER_PAGE: usize = 20;
+const MAX_LIVE_ITEMS: usize = 5000;
 
 pub struct MediaApp {
-    // resources
+    // core
     db: Database,
     config: AppConfig,
     texture_manager: TextureManager,
@@ -14,41 +20,26 @@ pub struct MediaApp {
     search_input: String,
     root_path: String,
     page: usize,
-
-    // Windows state
     settings_open: Option<bool>,
-}
 
-impl Default for MediaApp {
-    fn default() -> Self {
-        let config = AppConfig::load();
-        let db_path = config.database_path.to_string_lossy().to_string();
-        let db = Database::new(&db_path);
-        let texture_manager = TextureManager::new();
-        let root_path = config
-            .library_path
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "S:\\test".to_string());
+    // scanning
+    is_scanning: bool,
+    scan_rx: Option<Receiver<ScanEvent>>,
 
-        Self {
-            search_input: String::new(),
-            config,
-            db,
-            settings_open: None,
-            texture_manager,
-            root_path,
-            page: 0,
-        }
-    }
+    // transition
+    merging_from_db: bool,
+    merge_offset: usize,
+
+    // data
+    live_items: Vec<MediaItem>,
+    displayed_items: Vec<MediaItem>,
+    seen_paths: HashSet<String>,
 }
 
 impl MediaApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let config = AppConfig::load();
-        let db_path = config.database_path.to_string_lossy().to_string();
-        let db = Database::new(&db_path);
-        let texture_manager = TextureManager::new();
+
         let root_path = config
             .library_path
             .as_ref()
@@ -56,19 +47,106 @@ impl MediaApp {
             .unwrap_or_else(|| "S:\\test".to_string());
 
         Self {
-            search_input: String::new(),
+            db: Database::new(),
             config,
-            db,
-            settings_open: None,
-            texture_manager,
+            texture_manager: TextureManager::new(&cc.egui_ctx),
+
+            search_input: String::new(),
             root_path,
             page: 0,
+
+            scan_rx: None,
+            is_scanning: false,
+
+            live_items: Vec::new(),
+            displayed_items: Vec::new(),
+            seen_paths: HashSet::new(),
+
+            merging_from_db: false,
+            merge_offset: 0,
+
+            settings_open: None,
         }
+    }
+
+    fn start_scan(&mut self) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+
+        self.scan_rx = Some(rx);
+        self.is_scanning = true;
+
+        self.live_items.clear();
+        self.displayed_items.clear();
+        self.seen_paths.clear();
+
+        self.merging_from_db = false;
+        self.merge_offset = 0;
+
+        MediaScanner::start(self.root_path.clone(), tx);
+    }
+
+    fn handle_scan_events(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.scan_rx {
+            let mut updated = false;
+
+            for event in rx.try_iter() {
+                match event {
+                    ScanEvent::Item(item) => {
+                        if self.seen_paths.insert(item.path.clone()) {
+                            self.live_items.push(item.clone());
+                            self.displayed_items.push(item);
+                            updated = true;
+
+                            if self.live_items.len() > MAX_LIVE_ITEMS {
+                                self.live_items.remove(0);
+                            }
+                        }
+                    }
+
+                    ScanEvent::Finished => {
+                        self.is_scanning = false;
+                        self.merging_from_db = true;
+                        self.merge_offset = 0;
+                    }
+                }
+            }
+
+            if updated {
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    fn merge_from_db(&mut self, ctx: &egui::Context) {
+        if !self.merging_from_db {
+            return;
+        }
+
+        let batch = self.db.query(100, self.merge_offset);
+
+        if batch.is_empty() {
+            self.merging_from_db = false;
+            return;
+        }
+
+        for item in batch {
+            if self.seen_paths.insert(item.path.clone()) {
+                self.displayed_items.push(item);
+            }
+        }
+
+        self.merge_offset += 100;
+
+        ctx.request_repaint();
     }
 }
 
 impl eframe::App for MediaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_scan_events(ctx);
+        self.merge_from_db(ctx);
+
+        // TOP PANEL
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Настройки").clicked() {
@@ -82,6 +160,7 @@ impl eframe::App for MediaApp {
             });
         });
 
+        // SETTINGS MODAL
         if let Some(mut open) = self.settings_open.take() {
             egui::Window::new("Настройки")
                 .collapsible(false)
@@ -89,10 +168,10 @@ impl eframe::App for MediaApp {
                 .open(&mut open)
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("Путь к библиотеке:");
+                        ui.label("Путь:");
                         ui.label(&self.root_path);
 
-                        if ui.button("Выбрать папку").clicked() {
+                        if ui.button("Выбрать").clicked() {
                             if let Some(folder) = FileDialog::new()
                                 .set_directory(&self.root_path)
                                 .pick_folder()
@@ -104,11 +183,16 @@ impl eframe::App for MediaApp {
                         }
                     });
 
-                    if ui.button("Сканировать").clicked() {
-                        let mut scanner = MediaScanner::new(&mut self.db);
-                        scanner.scan_directory(&self.root_path);
-                        self.page = 0;
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Сканировать").clicked() {
+                            self.start_scan();
+                            self.page = 0;
+                        }
+
+                        if self.is_scanning {
+                            ui.spinner();
+                        }
+                    });
                 });
 
             if open {
@@ -118,32 +202,29 @@ impl eframe::App for MediaApp {
             }
         }
 
+        // DATA SOURCE
+        let items: Vec<MediaItem> = if self.is_scanning || self.merging_from_db {
+            self.displayed_items.clone()
+        } else {
+            let offset = self.page * ITEMS_PER_PAGE;
+
+            if self.search_input.trim().is_empty() {
+                self.db.query(ITEMS_PER_PAGE, offset)
+            } else {
+                self.db.search(&self.search_input, ITEMS_PER_PAGE, offset)
+            }
+        };
+
+        // GRID
         egui::CentralPanel::default().show(ctx, |ui| {
-            let items_per_page = 20;
-            let offset = self.page * items_per_page;
-
-            let (page_items, total) = if self.search_input.trim().is_empty() {
-                (self.db.query(items_per_page, offset), self.db.count())
-            } else {
-                (
-                    self.db.search(&self.search_input, items_per_page, offset),
-                    self.db.search_count(&self.search_input),
-                )
-            };
-
-            let max_page = if total == 0 {
-                0
-            } else {
-                (total - 1) / items_per_page
-            };
-
-            for row in page_items.chunks(5) {
+            for row in items.chunks(5) {
                 ui.horizontal(|ui| {
                     for item in row {
                         ui.group(|ui| {
-                            ui.set_min_size(egui::vec2(120.0, 120.0));
+                            ui.set_max_size(egui::vec2(200.0, 200.0));
 
-                            let texture = self.texture_manager.get_or_load(ctx, &item.path);
+                            let texture = self.texture_manager.get(ctx, &item.path);
+
                             ui.image(&texture);
                             ui.label(&item.name);
 
@@ -157,17 +238,19 @@ impl eframe::App for MediaApp {
 
             ui.separator();
 
-            ui.horizontal(|ui| {
-                if ui.button("<").clicked() && self.page > 0 {
-                    self.page -= 1;
-                }
+            if !self.is_scanning && !self.merging_from_db {
+                ui.horizontal(|ui| {
+                    if ui.button("<").clicked() && self.page > 0 {
+                        self.page -= 1;
+                    }
 
-                ui.label(format!("Страница {} / {}", self.page + 1, max_page + 1));
+                    ui.label(format!("Страница {}", self.page + 1));
 
-                if ui.button(">").clicked() && self.page < max_page {
-                    self.page += 1;
-                }
-            });
+                    if ui.button(">").clicked() {
+                        self.page += 1;
+                    }
+                });
+            }
         });
     }
 }

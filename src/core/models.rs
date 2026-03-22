@@ -1,5 +1,3 @@
-use egui::TextureHandle;
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MediaItem {
     pub path: String,
@@ -20,9 +18,4 @@ pub enum MediaType {
 pub enum ScanEvent {
     Item(MediaItem),
     Finished,
-}
-
-pub enum ThumbnailState {
-    Loading,
-    Ready(TextureHandle),
 }

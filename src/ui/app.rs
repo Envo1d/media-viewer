@@ -1,4 +1,4 @@
-use crate::core::models::{MediaItem, ScanEvent};
+use crate::core::models::{MediaItem, MediaType, ScanEvent};
 use crate::core::scanner::MediaScanner;
 use crate::data::db::Database;
 use crate::infra::config::AppConfig;
@@ -7,8 +7,8 @@ use crossbeam_channel::Receiver;
 use rfd::FileDialog;
 use std::collections::HashSet;
 
-const ITEMS_PER_PAGE: usize = 20;
 const MAX_LIVE_ITEMS: usize = 5000;
+const MAX_DISPLAYED: usize = 10000;
 
 pub struct MediaApp {
     // core
@@ -19,7 +19,6 @@ pub struct MediaApp {
     // UI state
     search_input: String,
     root_path: String,
-    page: usize,
     settings_open: Option<bool>,
 
     // scanning
@@ -53,7 +52,6 @@ impl MediaApp {
 
             search_input: String::new(),
             root_path,
-            page: 0,
 
             scan_rx: None,
             is_scanning: false,
@@ -87,7 +85,8 @@ impl MediaApp {
 
     fn handle_scan_events(&mut self, ctx: &egui::Context) {
         if let Some(rx) = &self.scan_rx {
-            let mut updated = false;
+            let mut added = 0;
+            let mut finished = false;
 
             for event in rx.try_iter() {
                 match event {
@@ -95,7 +94,12 @@ impl MediaApp {
                         if self.seen_paths.insert(item.path.clone()) {
                             self.live_items.push(item.clone());
                             self.displayed_items.push(item);
-                            updated = true;
+
+                            added += 1;
+
+                            if self.displayed_items.len() > MAX_DISPLAYED {
+                                self.displayed_items.drain(0..1000);
+                            }
 
                             if self.live_items.len() > MAX_LIVE_ITEMS {
                                 self.live_items.remove(0);
@@ -104,14 +108,18 @@ impl MediaApp {
                     }
 
                     ScanEvent::Finished => {
-                        self.is_scanning = false;
-                        self.merging_from_db = true;
-                        self.merge_offset = 0;
+                        finished = true;
                     }
                 }
             }
 
-            if updated {
+            if finished {
+                self.is_scanning = false;
+                self.merging_from_db = true;
+                self.merge_offset = 0;
+            }
+
+            if added > 0 || finished {
                 ctx.request_repaint();
             }
         }
@@ -143,6 +151,7 @@ impl MediaApp {
 
 impl eframe::App for MediaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.texture_manager.update(ctx);
         self.handle_scan_events(ctx);
         self.merge_from_db(ctx);
 
@@ -186,7 +195,6 @@ impl eframe::App for MediaApp {
                     ui.horizontal(|ui| {
                         if ui.button("Сканировать").clicked() {
                             self.start_scan();
-                            self.page = 0;
                         }
 
                         if self.is_scanning {
@@ -203,54 +211,151 @@ impl eframe::App for MediaApp {
         }
 
         // DATA SOURCE
-        let items: Vec<MediaItem> = if self.is_scanning || self.merging_from_db {
-            self.displayed_items.clone()
+        let items: &Vec<MediaItem> = if self.is_scanning || self.merging_from_db {
+            &self.displayed_items
         } else {
-            let offset = self.page * ITEMS_PER_PAGE;
-
-            if self.search_input.trim().is_empty() {
-                self.db.query(ITEMS_PER_PAGE, offset)
+            self.displayed_items = if self.search_input.trim().is_empty() {
+                self.db.query(5000, 0)
             } else {
-                self.db.search(&self.search_input, ITEMS_PER_PAGE, offset)
-            }
+                self.db.search(&self.search_input, 5000, 0)
+            };
+
+            &self.displayed_items
         };
 
         // GRID
         egui::CentralPanel::default().show(ctx, |ui| {
-            for row in items.chunks(5) {
-                ui.horizontal(|ui| {
-                    for item in row {
-                        ui.group(|ui| {
-                            ui.set_max_size(egui::vec2(200.0, 200.0));
+            ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
 
-                            let texture = self.texture_manager.get(ctx, &item.path);
+            let item_size = 200.0;
+            let spacing = 10.0;
+            let max_width = ui.available_width().min(1400.0);
 
-                            ui.image(&texture);
-                            ui.label(&item.name);
+            ui.vertical_centered(|ui| {
+                ui.set_max_width(max_width);
 
-                            if ui.button("Открыть").clicked() {
-                                let _ = open::that(&item.path);
-                            }
-                        });
-                    }
-                });
-            }
+                let available_width = ui.available_width();
 
-            ui.separator();
+                let columns = ((available_width + spacing) / (item_size + spacing))
+                    .floor()
+                    .max(1.0) as usize;
 
-            if !self.is_scanning && !self.merging_from_db {
-                ui.horizontal(|ui| {
-                    if ui.button("<").clicked() && self.page > 0 {
-                        self.page -= 1;
-                    }
+                let total_width = columns as f32 * item_size + (columns - 1) as f32 * spacing;
 
-                    ui.label(format!("Страница {}", self.page + 1));
+                let side_padding = ((available_width - total_width) / 2.0).max(0.0);
 
-                    if ui.button(">").clicked() {
-                        self.page += 1;
-                    }
-                });
-            }
+                let row_height = item_size + spacing;
+                let total_rows = (items.len() + columns - 1) / columns;
+
+                egui::ScrollArea::vertical().show_rows(
+                    ui,
+                    row_height,
+                    total_rows,
+                    |ui, row_range| {
+                        for row in row_range {
+                            ui.horizontal(|ui| {
+                                ui.add_space(side_padding);
+
+                                for col in 0..columns {
+                                    let index = row * columns + col;
+
+                                    if index >= items.len() {
+                                        break;
+                                    }
+
+                                    let item = &items[index];
+
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(item_size, item_size),
+                                        egui::Layout::top_down(egui::Align::Center),
+                                        |ui| {
+                                            let texture = self.texture_manager.get(ctx, &item.path);
+
+                                            let is_video =
+                                                matches!(item.media_type, MediaType::Video);
+
+                                            let (rect, response) = ui.allocate_exact_size(
+                                                egui::vec2(item_size, item_size),
+                                                egui::Sense::click(),
+                                            );
+
+                                            if response.clicked() {
+                                                let _ = open::that(&item.path);
+                                            }
+
+                                            let painter = ui.painter();
+                                            painter.rect_filled(
+                                                rect,
+                                                4.0,
+                                                egui::Color32::from_gray(30),
+                                            );
+
+                                            if is_video {
+                                                painter.rect_stroke(
+                                                    rect,
+                                                    4.0,
+                                                    egui::Stroke::new(
+                                                        2.0,
+                                                        egui::Color32::LIGHT_BLUE,
+                                                    ),
+                                                    egui::StrokeKind::Outside,
+                                                );
+                                            }
+
+                                            let tex_size = texture.size_vec2();
+
+                                            let scale = (item_size / tex_size.x)
+                                                .min(item_size / tex_size.y)
+                                                .min(1.0);
+
+                                            let img_size = tex_size * scale;
+
+                                            let img_pos = rect.center() - img_size / 2.0;
+
+                                            painter.image(
+                                                texture.id(),
+                                                egui::Rect::from_min_size(img_pos, img_size),
+                                                egui::Rect::from_min_max(
+                                                    egui::Pos2::new(0.0, 0.0),
+                                                    egui::Pos2::new(1.0, 1.0),
+                                                ),
+                                                egui::Color32::WHITE,
+                                            );
+
+                                            if response.hovered() {
+                                                painter.rect_filled(
+                                                    rect,
+                                                    4.0,
+                                                    egui::Color32::from_black_alpha(140),
+                                                );
+
+                                                let galley = ui.painter().layout(
+                                                    item.name.clone(),
+                                                    egui::FontId::proportional(14.0),
+                                                    egui::Color32::WHITE,
+                                                    rect.width() - 10.0,
+                                                );
+
+                                                let text_pos = rect.center() - galley.size() / 2.0;
+
+                                                painter.galley(
+                                                    text_pos,
+                                                    galley,
+                                                    egui::Color32::WHITE,
+                                                );
+                                            }
+                                        },
+                                    );
+
+                                    if col < columns - 1 {
+                                        ui.add_space(spacing);
+                                    }
+                                }
+                            });
+                        }
+                    },
+                );
+            })
         });
     }
 }

@@ -7,6 +7,7 @@ use lru::LruCache;
 use std::collections::{HashSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::thread;
+use std::time::Duration;
 
 const THUMB_SIZE: u32 = 120;
 const MAX_TEXTURES: usize = 150;
@@ -56,7 +57,7 @@ impl TextureManager {
                     let img = load_or_generate(&cache_dir, &path, THUMB_SIZE);
 
                     if result_tx.send((path, img)).ok().is_some() {
-                        ctx.request_repaint();
+                        ctx.request_repaint_after(Duration::from_millis(16));
                     }
                 }
             });
@@ -89,9 +90,11 @@ impl TextureManager {
         }
     }
 
-    pub fn get(&mut self, ctx: &Context, path: &str) -> TextureHandle {
+    pub fn update(&mut self, ctx: &Context) {
         self.process_results(ctx);
+    }
 
+    pub fn get(&mut self, _ctx: &Context, path: &str) -> TextureHandle {
         // cache hit
         if let Some(tex) = self.cache.get(path) {
             return tex.clone();
@@ -141,17 +144,17 @@ impl TextureManager {
                 Some(p) => p,
                 None => break,
             };
-            
+
             self.retry_set.remove(&path);
-            
+
             if self.cache.contains(&path) {
                 continue;
             }
-            
+
             if self.loading.contains(&path) {
                 continue;
             }
-            
+
             if self.queue_tx.try_send(path.clone()).is_ok() {
                 self.loading.insert(path);
             } else {

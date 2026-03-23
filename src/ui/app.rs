@@ -45,7 +45,7 @@ impl MediaApp {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "S:\\test".to_string());
 
-        Self {
+        let mut app = Self {
             db: Database::new(),
             config,
             texture_manager: TextureManager::new(&cc.egui_ctx),
@@ -64,7 +64,11 @@ impl MediaApp {
             merge_offset: 0,
 
             settings_open: None,
-        }
+        };
+
+        app.refresh_items();
+
+        app
     }
 
     fn start_scan(&mut self) {
@@ -147,6 +151,14 @@ impl MediaApp {
 
         ctx.request_repaint();
     }
+
+    fn refresh_items(&mut self) {
+        self.displayed_items = if self.search_input.trim().is_empty() {
+            self.db.query(5000, 0)
+        } else {
+            self.db.search(&self.search_input, 5000, 0)
+        };
+    }
 }
 
 impl eframe::App for MediaApp {
@@ -165,7 +177,11 @@ impl eframe::App for MediaApp {
 
             ui.horizontal(|ui| {
                 ui.label("Поиск:");
-                ui.text_edit_singleline(&mut self.search_input);
+                if ui.text_edit_singleline(&mut self.search_input).changed() {
+                    if !self.is_scanning && !self.merging_from_db {
+                        self.refresh_items();
+                    }
+                }
             });
         });
 
@@ -211,17 +227,7 @@ impl eframe::App for MediaApp {
         }
 
         // DATA SOURCE
-        let items: &Vec<MediaItem> = if self.is_scanning || self.merging_from_db {
-            &self.displayed_items
-        } else {
-            self.displayed_items = if self.search_input.trim().is_empty() {
-                self.db.query(5000, 0)
-            } else {
-                self.db.search(&self.search_input, 5000, 0)
-            };
-
-            &self.displayed_items
-        };
+        let items = &self.displayed_items;
 
         // GRID
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -229,12 +235,12 @@ impl eframe::App for MediaApp {
 
             let item_size = 200.0;
             let spacing = 10.0;
-            let max_width = ui.available_width().min(1400.0);
+            let max_width = ui.available_width();
 
             ui.vertical_centered(|ui| {
                 ui.set_max_width(max_width);
 
-                let available_width = ui.available_width();
+                let available_width = ui.available_width() * (1.0 - 20.0 / 100.0);
 
                 let columns = ((available_width + spacing) / (item_size + spacing))
                     .floor()
@@ -247,11 +253,28 @@ impl eframe::App for MediaApp {
                 let row_height = item_size + spacing;
                 let total_rows = (items.len() + columns - 1) / columns;
 
+                let vertical_padding = 10.0;
+
                 egui::ScrollArea::vertical().show_rows(
                     ui,
                     row_height,
                     total_rows,
                     |ui, row_range| {
+                        let prefetch_margin = 2;
+                        let start_prefetch = row_range.start.saturating_sub(prefetch_margin);
+                        let end_prefetch = (row_range.end + prefetch_margin).min(total_rows);
+
+                        for p_row in start_prefetch..end_prefetch {
+                            for col in 0..columns {
+                                let index = p_row * columns + col;
+                                if let Some(item) = items.get(index) {
+                                    let _ = self.texture_manager.get(ctx, &item.path);
+                                }
+                            }
+                        }
+
+                        ui.add_space(vertical_padding);
+
                         for row in row_range {
                             ui.horizontal(|ui| {
                                 ui.add_space(side_padding);
@@ -351,8 +374,12 @@ impl eframe::App for MediaApp {
                                         ui.add_space(spacing);
                                     }
                                 }
+
+                                ui.add_space(side_padding);
                             });
                         }
+
+                        ui.add_space(vertical_padding);
                     },
                 );
             })

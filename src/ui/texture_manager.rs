@@ -1,6 +1,6 @@
 use crate::infra::cache::load_or_generate;
 use crate::infra::config::AppConfig;
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{bounded, select, Receiver, Sender};
 use egui::{ColorImage, Context, TextureHandle};
 use image::{Rgba, RgbaImage};
 use lru::LruCache;
@@ -22,7 +22,8 @@ pub struct TextureManager {
     loading: HashSet<String>,
 
     // worker communication
-    queue_tx: Sender<String>,
+    high_tx: Sender<String>,
+    low_tx: Sender<String>,
     result_rx: Receiver<(String, RgbaImage)>,
 
     // retry
@@ -35,14 +36,17 @@ pub struct TextureManager {
 
 impl TextureManager {
     pub fn new(ctx: &Context) -> Self {
-        let (queue_tx, queue_rx) = bounded::<String>(QUEUE_LIMIT);
+        let (high_tx, high_rx) = bounded::<String>(QUEUE_LIMIT);
+        let (low_tx, low_rx) = bounded::<String>(QUEUE_LIMIT);
+
         let (result_tx, result_rx) = bounded::<(String, RgbaImage)>(QUEUE_LIMIT);
 
         let cache_dir_base = AppConfig::get_cache_dir();
 
         // Workers
         for _ in 0..num_cpus::get() {
-            let queue_rx = queue_rx.clone();
+            let high_rx = high_rx.clone();
+            let low_rx = low_rx.clone();
             let result_tx = result_tx.clone();
             let ctx = ctx.clone();
             let cache_dir = cache_dir_base.clone();
@@ -53,11 +57,29 @@ impl TextureManager {
                     let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok();
                 }
 
-                for path in queue_rx {
+                let process = |path: String| {
                     let img = load_or_generate(&cache_dir, &path, THUMB_SIZE);
 
                     if result_tx.send((path, img)).ok().is_some() {
                         ctx.request_repaint_after(Duration::from_millis(16));
+                    }
+                };
+
+                loop {
+                    select! {
+                        recv(high_rx) -> msg => {
+                            if let Ok(path) = msg {
+                                process(path);
+                            } else {
+                                break;
+                            }
+                        }recv(low_rx) -> msg => {
+                            if let Ok(path) = msg {
+                                process(path);
+                            } else {
+                                break;
+                            }
+                        }
                     }
                 }
             });
@@ -82,7 +104,8 @@ impl TextureManager {
         Self {
             cache: LruCache::new(NonZeroUsize::new(MAX_TEXTURES).unwrap()),
             loading: HashSet::new(),
-            queue_tx,
+            high_tx,
+            low_tx,
             result_rx,
             retry_queue: VecDeque::new(),
             retry_set: HashSet::new(),
@@ -108,7 +131,7 @@ impl TextureManager {
         let path_str = path.to_string();
 
         // 3. try enqueue
-        if self.queue_tx.try_send(path_str.clone()).is_ok() {
+        if self.high_tx.try_send(path_str.clone()).is_ok() {
             self.loading.insert(path_str);
         } else {
             if self.retry_queue.len() < MAX_RETRY && !self.retry_set.contains(&path_str) {
@@ -147,15 +170,11 @@ impl TextureManager {
 
             self.retry_set.remove(&path);
 
-            if self.cache.contains(&path) {
+            if self.cache.contains(&path) || self.loading.contains(&path) {
                 continue;
             }
 
-            if self.loading.contains(&path) {
-                continue;
-            }
-
-            if self.queue_tx.try_send(path.clone()).is_ok() {
+            if self.low_tx.try_send(path.clone()).is_ok() {
                 self.loading.insert(path);
             } else {
                 if self.retry_queue.len() < MAX_RETRY {

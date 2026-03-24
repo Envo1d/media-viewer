@@ -5,7 +5,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use std::{fs, thread};
-use walkdir::WalkDir;
+use ignore::WalkBuilder;
 
 const BATCH_SIZE: usize = 500;
 
@@ -33,7 +33,7 @@ impl MediaScanner {
     }
 
     // === FILE PROCESSING ===
-    fn process_entry(root_path: &str, entry: &walkdir::DirEntry) -> Option<MediaItem> {
+    fn process_entry(root_path: &str, entry: &ignore::DirEntry) -> Option<MediaItem> {
         let path = entry.path();
 
         if !path.is_file() {
@@ -79,67 +79,40 @@ impl MediaScanner {
     }
 
     fn run(root_path: String, ui_tx: Sender<ScanEvent>) {
+        let (tx, rx) = unbounded();
+        let mut db = Database::new();
         let scan_id = current_timestamp();
-
-        let (tx, rx) = unbounded::<MediaItem>();
-
-        // === DB WORKER ===
+        
         let db_thread = thread::spawn(move || {
-            let mut db = Database::new();
             Self::db_worker(&mut db, rx, scan_id);
         });
 
-        // === WORKERS ===
         let root = Arc::new(root_path);
-
-        let walker = WalkDir::new(&*root)
-            .min_depth(3)
-            .into_iter()
-            .filter_map(Result::ok);
-
-        let num_threads = num_cpus::get();
-
-        let walker = Arc::new(parking_lot::Mutex::new(walker));
-
-        let mut handles = Vec::new();
-
-        for _ in 0..num_threads {
+        
+        let walker = WalkBuilder::new(&*root)
+            .hidden(false)
+            .git_ignore(false)
+            .threads(num_cpus::get())
+            .build_parallel();
+        
+        walker.run(|| {
             let tx = tx.clone();
-            let root = root.clone();
-            let walker = walker.clone();
             let ui_tx = ui_tx.clone();
+            let root = root.clone();
 
-            let handle = thread::spawn(move || {
-                loop {
-                    let entry = {
-                        let mut w = walker.lock();
-                        w.next()
-                    };
-
-                    let entry = match entry {
-                        Some(e) => e,
-                        None => break,
-                    };
-
+            Box::new(move |result| {
+                if let Ok(entry) = result {
                     if let Some(item) = Self::process_entry(&root, &entry) {
                         tx.send(item.clone()).ok();
-
                         ui_tx.send(ScanEvent::Item(item)).ok();
                     }
                 }
-            });
-
-            handles.push(handle);
-        }
-
+                ignore::WalkState::Continue
+            })
+        });
+        
         drop(tx);
-
-        for h in handles {
-            h.join().ok();
-        }
-
         db_thread.join().ok();
-
         ui_tx.send(ScanEvent::Finished).ok();
     }
 

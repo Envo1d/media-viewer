@@ -4,15 +4,13 @@ use crossbeam_channel::{bounded, select, Receiver, Sender};
 use egui::{ColorImage, Context, TextureHandle};
 use image::{Rgba, RgbaImage};
 use lru::LruCache;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::thread;
-use std::time::Duration;
 
 const THUMB_SIZE: u32 = 120;
-const MAX_TEXTURES: usize = 150;
+const MAX_TEXTURES: usize = 400;
 const QUEUE_LIMIT: usize = 300;
-const MAX_RETRY: usize = 512;
 
 pub struct TextureManager {
     // LRU cache (GPU textures)
@@ -24,11 +22,8 @@ pub struct TextureManager {
     // worker communication
     high_tx: Sender<String>,
     low_tx: Sender<String>,
-    result_rx: Receiver<(String, RgbaImage)>,
-
-    // retry
-    retry_queue: VecDeque<String>,
-    retry_set: HashSet<String>,
+    result_rx: Receiver<(String, Option<RgbaImage>)>,
+    failed: HashSet<String>,
 
     // other
     placeholder: TextureHandle,
@@ -39,16 +34,17 @@ impl TextureManager {
         let (high_tx, high_rx) = bounded::<String>(QUEUE_LIMIT);
         let (low_tx, low_rx) = bounded::<String>(QUEUE_LIMIT);
 
-        let (result_tx, result_rx) = bounded::<(String, RgbaImage)>(QUEUE_LIMIT);
+        let (result_tx, result_rx) = bounded::<(String, Option<RgbaImage>)>(QUEUE_LIMIT);
 
         let cache_dir_base = AppConfig::get_cache_dir();
 
         // Workers
-        for _ in 0..num_cpus::get() {
+        let worker_count = std::cmp::min(6, num_cpus::get());
+
+        for _ in 0..worker_count {
             let high_rx = high_rx.clone();
             let low_rx = low_rx.clone();
             let result_tx = result_tx.clone();
-            let ctx = ctx.clone();
             let cache_dir = cache_dir_base.clone();
 
             thread::spawn(move || {
@@ -58,27 +54,23 @@ impl TextureManager {
                 }
 
                 let process = |path: String| {
-                    let img = load_or_generate(&cache_dir, &path, THUMB_SIZE);
+                    let img_opt = load_or_generate(&cache_dir, &path, THUMB_SIZE);
 
-                    if result_tx.send((path, img)).ok().is_some() {
-                        ctx.request_repaint_after(Duration::from_millis(16));
-                    }
+                    let _ = result_tx.send((path, img_opt));
                 };
 
                 loop {
+                    if let Ok(path) = high_rx.try_recv() {
+                        process(path);
+                        continue;
+                    }
+
                     select! {
                         recv(high_rx) -> msg => {
-                            if let Ok(path) = msg {
-                                process(path);
-                            } else {
-                                break;
-                            }
-                        }recv(low_rx) -> msg => {
-                            if let Ok(path) = msg {
-                                process(path);
-                            } else {
-                                break;
-                            }
+                            if let Ok(path) = msg { process(path); } else { break; }
+                        }
+                        recv(low_rx) -> msg => {
+                            if let Ok(path) = msg { process(path); } else { break; }
                         }
                     }
                 }
@@ -107,8 +99,7 @@ impl TextureManager {
             high_tx,
             low_tx,
             result_rx,
-            retry_queue: VecDeque::new(),
-            retry_set: HashSet::new(),
+            failed: HashSet::new(),
             placeholder,
         }
     }
@@ -123,68 +114,66 @@ impl TextureManager {
             return tex.clone();
         }
 
-        // loading → placeholder
-        if self.loading.contains(path) {
+        if self.loading.contains(path) || self.failed.contains(path) {
             return self.placeholder.clone();
         }
 
         let path_str = path.to_string();
 
-        // 3. try enqueue
         if self.high_tx.try_send(path_str.clone()).is_ok() {
             self.loading.insert(path_str);
-        } else {
-            if self.retry_queue.len() < MAX_RETRY && !self.retry_set.contains(&path_str) {
-                self.retry_queue.push_back(path_str.clone());
-                self.retry_set.insert(path_str);
-            }
         }
 
         self.placeholder.clone()
     }
 
-    fn process_results(&mut self, ctx: &Context) {
-        for (path, img) in self.result_rx.try_iter() {
-            self.loading.remove(&path);
-
-            let size = [img.width() as usize, img.height() as usize];
-            let pixels = img.into_raw();
-
-            let texture = ctx.load_texture(
-                &path,
-                ColorImage::from_rgba_unmultiplied(size, &pixels),
-                Default::default(),
-            );
-
-            self.cache.put(path, texture);
+    pub fn prefetch(&mut self, path: &str) {
+        if self.cache.get(path).is_some()
+            || self.loading.contains(path)
+            || self.failed.contains(path)
+        {
+            return;
         }
 
-        let mut attempts = 0;
-        let max_attempts_per_frame = 32;
+        let path_str = path.to_string();
 
-        while attempts < max_attempts_per_frame {
-            let path = match self.retry_queue.pop_front() {
-                Some(p) => p,
-                None => break,
-            };
+        if self.low_tx.try_send(path_str.clone()).is_ok() {
+            self.loading.insert(path_str);
+        }
+    }
 
-            self.retry_set.remove(&path);
+    fn process_results(&mut self, ctx: &Context) {
+        let mut processed = 0;
+        let max_per_frame = 32;
 
-            if self.cache.contains(&path) || self.loading.contains(&path) {
-                continue;
-            }
-
-            if self.low_tx.try_send(path.clone()).is_ok() {
-                self.loading.insert(path);
-            } else {
-                if self.retry_queue.len() < MAX_RETRY {
-                    self.retry_queue.push_back(path.clone());
-                    self.retry_set.insert(path);
-                }
+        for (path, img_opt) in self.result_rx.try_iter() {
+            if processed >= max_per_frame {
                 break;
             }
 
-            attempts += 1;
+            self.loading.remove(&path);
+
+            if let Some(img) = img_opt {
+                let size = [img.width() as usize, img.height() as usize];
+                let pixels = img.as_raw();
+
+                let texture = ctx.load_texture(
+                    &path,
+                    ColorImage::from_rgba_unmultiplied(size, &pixels),
+                    Default::default(),
+                );
+
+                self.failed.remove(&path);
+                self.cache.put(path, texture);
+            } else {
+                self.failed.insert(path);
+            }
+
+            processed += 1;
+        }
+
+        if processed > 0 {
+            ctx.request_repaint();
         }
     }
 }

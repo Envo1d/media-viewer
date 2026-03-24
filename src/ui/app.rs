@@ -1,11 +1,14 @@
 use crate::core::models::{MediaItem, MediaType, ScanEvent};
 use crate::core::scanner::MediaScanner;
 use crate::data::db::Database;
+use crate::infra::cache;
 use crate::infra::config::AppConfig;
 use crate::ui::texture_manager::TextureManager;
 use crossbeam_channel::Receiver;
+use egui::Vec2;
 use rfd::FileDialog;
 use std::collections::HashSet;
+use std::fs;
 
 const MAX_LIVE_ITEMS: usize = 5000;
 const MAX_DISPLAYED: usize = 10000;
@@ -25,10 +28,6 @@ pub struct MediaApp {
     is_scanning: bool,
     scan_rx: Option<Receiver<ScanEvent>>,
 
-    // transition
-    merging_from_db: bool,
-    merge_offset: usize,
-
     // data
     live_items: Vec<MediaItem>,
     displayed_items: Vec<MediaItem>,
@@ -45,6 +44,12 @@ impl MediaApp {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "S:\\test".to_string());
 
+        let cache_dir = AppConfig::get_cache_dir();
+
+        let _ = fs::create_dir_all(&cache_dir);
+
+        cache::prune_cache(&cache_dir, 500);
+
         let mut app = Self {
             db: Database::new(),
             config,
@@ -59,9 +64,6 @@ impl MediaApp {
             live_items: Vec::new(),
             displayed_items: Vec::new(),
             seen_paths: HashSet::new(),
-
-            merging_from_db: false,
-            merge_offset: 0,
 
             settings_open: None,
         };
@@ -80,9 +82,6 @@ impl MediaApp {
         self.live_items.clear();
         self.displayed_items.clear();
         self.seen_paths.clear();
-
-        self.merging_from_db = false;
-        self.merge_offset = 0;
 
         MediaScanner::start(self.root_path.clone(), tx);
     }
@@ -119,8 +118,7 @@ impl MediaApp {
 
             if finished {
                 self.is_scanning = false;
-                self.merging_from_db = true;
-                self.merge_offset = 0;
+                self.refresh_items();
             }
 
             if added > 0 || finished {
@@ -129,34 +127,12 @@ impl MediaApp {
         }
     }
 
-    fn merge_from_db(&mut self, ctx: &egui::Context) {
-        if !self.merging_from_db {
-            return;
-        }
-
-        let batch = self.db.query(100, self.merge_offset);
-
-        if batch.is_empty() {
-            self.merging_from_db = false;
-            return;
-        }
-
-        for item in batch {
-            if self.seen_paths.insert(item.path.clone()) {
-                self.displayed_items.push(item);
-            }
-        }
-
-        self.merge_offset += 100;
-
-        ctx.request_repaint();
-    }
-
     fn refresh_items(&mut self) {
+        const PAGE_SIZE: usize = 500;
         self.displayed_items = if self.search_input.trim().is_empty() {
-            self.db.query(5000, 0)
+            self.db.query(PAGE_SIZE, 0)
         } else {
-            self.db.search(&self.search_input, 5000, 0)
+            self.db.search(&self.search_input, PAGE_SIZE, 0)
         };
     }
 }
@@ -165,7 +141,6 @@ impl eframe::App for MediaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.texture_manager.update(ctx);
         self.handle_scan_events(ctx);
-        self.merge_from_db(ctx);
 
         // TOP PANEL
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -178,7 +153,7 @@ impl eframe::App for MediaApp {
             ui.horizontal(|ui| {
                 ui.label("Поиск:");
                 if ui.text_edit_singleline(&mut self.search_input).changed() {
-                    if !self.is_scanning && !self.merging_from_db {
+                    if !self.is_scanning {
                         self.refresh_items();
                     }
                 }
@@ -235,154 +210,127 @@ impl eframe::App for MediaApp {
 
             let item_size = 200.0;
             let spacing = 10.0;
-            let max_width = ui.available_width();
+            let available_width = ui.available_width() * 0.8;
 
-            ui.vertical_centered(|ui| {
-                ui.set_max_width(max_width);
+            let columns = ((available_width + spacing) / (item_size + spacing))
+                .floor()
+                .max(1.0) as usize;
 
-                let available_width = ui.available_width() * (1.0 - 20.0 / 100.0);
+            let total_width = columns as f32 * item_size + (columns - 1) as f32 * spacing;
+            let side_padding = ((ui.available_width() - total_width) / 2.0).max(0.0);
 
-                let columns = ((available_width + spacing) / (item_size + spacing))
-                    .floor()
-                    .max(1.0) as usize;
+            let row_height = item_size + spacing;
+            let total_rows = (items.len() + columns - 1) / columns;
 
-                let total_width = columns as f32 * item_size + (columns - 1) as f32 * spacing;
+            egui::ScrollArea::vertical()
+                .animated(true)
+                .wheel_scroll_multiplier(Vec2::new(2.0, 2.0))
+                .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                    let margin = 2;
+                    let prefetch_rows = (row_range.start.saturating_sub(margin)..row_range.start)
+                        .chain(row_range.end..(row_range.end + margin).min(total_rows));
 
-                let side_padding = ((available_width - total_width) / 2.0).max(0.0);
-
-                let row_height = item_size + spacing;
-                let total_rows = (items.len() + columns - 1) / columns;
-
-                let vertical_padding = 10.0;
-
-                egui::ScrollArea::vertical().show_rows(
-                    ui,
-                    row_height,
-                    total_rows,
-                    |ui, row_range| {
-                        let prefetch_margin = 2;
-                        let start_prefetch = row_range.start.saturating_sub(prefetch_margin);
-                        let end_prefetch = (row_range.end + prefetch_margin).min(total_rows);
-
-                        for p_row in start_prefetch..end_prefetch {
-                            for col in 0..columns {
-                                let index = p_row * columns + col;
-                                if let Some(item) = items.get(index) {
-                                    let _ = self.texture_manager.get(ctx, &item.path);
-                                }
+                    for p_row in prefetch_rows {
+                        for col in 0..columns {
+                            let index = p_row * columns + col;
+                            if let Some(item) = items.get(index) {
+                                self.texture_manager.prefetch(&item.path);
                             }
                         }
+                    }
 
-                        ui.add_space(vertical_padding);
+                    ui.add_space(10.0);
 
-                        for row in row_range {
-                            ui.horizontal(|ui| {
-                                ui.add_space(side_padding);
+                    for row in row_range {
+                        ui.horizontal(|ui| {
+                            ui.add_space(side_padding);
 
-                                for col in 0..columns {
-                                    let index = row * columns + col;
+                            for col in 0..columns {
+                                let index = row * columns + col;
+                                if index >= items.len() {
+                                    break;
+                                }
 
-                                    if index >= items.len() {
-                                        break;
-                                    }
+                                let item = &items[index];
 
-                                    let item = &items[index];
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(item_size, item_size),
+                                    egui::Layout::top_down(egui::Align::Center),
+                                    |ui| {
+                                        let texture = self.texture_manager.get(ctx, &item.path);
 
-                                    ui.allocate_ui_with_layout(
-                                        egui::vec2(item_size, item_size),
-                                        egui::Layout::top_down(egui::Align::Center),
-                                        |ui| {
-                                            let texture = self.texture_manager.get(ctx, &item.path);
+                                        let (rect, response) = ui.allocate_exact_size(
+                                            egui::vec2(item_size, item_size),
+                                            egui::Sense::click(),
+                                        );
 
-                                            let is_video =
-                                                matches!(item.media_type, MediaType::Video);
+                                        if response.clicked() {
+                                            let _ = open::that(&item.path);
+                                        }
 
-                                            let (rect, response) = ui.allocate_exact_size(
-                                                egui::vec2(item_size, item_size),
-                                                egui::Sense::click(),
+                                        let painter = ui.painter();
+                                        painter.rect_filled(
+                                            rect,
+                                            4.0,
+                                            egui::Color32::from_gray(30),
+                                        );
+
+                                        if matches!(item.media_type, MediaType::Video) {
+                                            painter.rect_stroke(
+                                                rect,
+                                                4.0,
+                                                egui::Stroke::new(2.0, egui::Color32::LIGHT_BLUE),
+                                                egui::StrokeKind::Outside,
                                             );
+                                        }
 
-                                            if response.clicked() {
-                                                let _ = open::that(&item.path);
-                                            }
+                                        let tex_size = texture.size_vec2();
+                                        let scale = (item_size / tex_size.x)
+                                            .min(item_size / tex_size.y)
+                                            .min(1.0);
+                                        let img_size = tex_size * scale;
+                                        let img_pos = rect.center() - img_size / 2.0;
 
-                                            let painter = ui.painter();
+                                        painter.image(
+                                            texture.id(),
+                                            egui::Rect::from_min_size(img_pos, img_size),
+                                            egui::Rect::from_min_max(
+                                                egui::pos2(0.0, 0.0),
+                                                egui::pos2(1.0, 1.0),
+                                            ),
+                                            egui::Color32::WHITE,
+                                        );
+
+                                        if response.hovered() {
                                             painter.rect_filled(
                                                 rect,
                                                 4.0,
-                                                egui::Color32::from_gray(30),
+                                                egui::Color32::from_black_alpha(160),
                                             );
-
-                                            if is_video {
-                                                painter.rect_stroke(
-                                                    rect,
-                                                    4.0,
-                                                    egui::Stroke::new(
-                                                        2.0,
-                                                        egui::Color32::LIGHT_BLUE,
-                                                    ),
-                                                    egui::StrokeKind::Outside,
-                                                );
-                                            }
-
-                                            let tex_size = texture.size_vec2();
-
-                                            let scale = (item_size / tex_size.x)
-                                                .min(item_size / tex_size.y)
-                                                .min(1.0);
-
-                                            let img_size = tex_size * scale;
-
-                                            let img_pos = rect.center() - img_size / 2.0;
-
-                                            painter.image(
-                                                texture.id(),
-                                                egui::Rect::from_min_size(img_pos, img_size),
-                                                egui::Rect::from_min_max(
-                                                    egui::Pos2::new(0.0, 0.0),
-                                                    egui::Pos2::new(1.0, 1.0),
-                                                ),
+                                            let galley = ui.painter().layout(
+                                                item.name.clone(),
+                                                egui::FontId::proportional(14.0),
+                                                egui::Color32::WHITE,
+                                                rect.width() - 10.0,
+                                            );
+                                            painter.galley(
+                                                rect.center() - galley.size() / 2.0,
+                                                galley,
                                                 egui::Color32::WHITE,
                                             );
+                                        }
+                                    },
+                                );
 
-                                            if response.hovered() {
-                                                painter.rect_filled(
-                                                    rect,
-                                                    4.0,
-                                                    egui::Color32::from_black_alpha(140),
-                                                );
-
-                                                let galley = ui.painter().layout(
-                                                    item.name.clone(),
-                                                    egui::FontId::proportional(14.0),
-                                                    egui::Color32::WHITE,
-                                                    rect.width() - 10.0,
-                                                );
-
-                                                let text_pos = rect.center() - galley.size() / 2.0;
-
-                                                painter.galley(
-                                                    text_pos,
-                                                    galley,
-                                                    egui::Color32::WHITE,
-                                                );
-                                            }
-                                        },
-                                    );
-
-                                    if col < columns - 1 {
-                                        ui.add_space(spacing);
-                                    }
+                                if col < columns - 1 {
+                                    ui.add_space(spacing);
                                 }
-
-                                ui.add_space(side_padding);
-                            });
-                        }
-
-                        ui.add_space(vertical_padding);
-                    },
-                );
-            })
+                            }
+                            ui.add_space(side_padding);
+                        });
+                    }
+                    ui.add_space(10.0);
+                });
         });
     }
 }

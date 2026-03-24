@@ -1,78 +1,85 @@
+use crate::core::models::TextureTask;
 use crate::infra::cache::load_or_generate;
 use crate::infra::config::AppConfig;
-use crossbeam_channel::{bounded, select, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver};
 use egui::{ColorImage, Context, TextureHandle};
 use image::{Rgba, RgbaImage};
 use lru::LruCache;
-use std::collections::HashSet;
+use std::collections::{BinaryHeap, HashSet};
 use std::num::NonZeroUsize;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::time::Instant;
 
 const THUMB_SIZE: u32 = 120;
 const MAX_TEXTURES: usize = 400;
 const QUEUE_LIMIT: usize = 300;
 
 pub struct TextureManager {
-    // LRU cache (GPU textures)
+    // LRU cache
     cache: LruCache<String, TextureHandle>,
 
-    // loading state
+    // state
     loading: HashSet<String>,
-
-    // worker communication
-    high_tx: Sender<String>,
-    low_tx: Sender<String>,
-    result_rx: Receiver<(String, Option<RgbaImage>)>,
     failed: HashSet<String>,
 
-    // other
+    // scheduler
+    task_queue: Arc<(Mutex<BinaryHeap<TextureTask>>, Condvar)>,
+    in_queue: Arc<Mutex<HashSet<String>>>,
+
+    // visible
+    visible_set: HashSet<String>,
+
+    // results
+    result_rx: Receiver<(String, Option<RgbaImage>)>,
+
+    // placeholder
     placeholder: TextureHandle,
 }
 
 impl TextureManager {
     pub fn new(ctx: &Context) -> Self {
-        let (high_tx, high_rx) = bounded::<String>(QUEUE_LIMIT);
-        let (low_tx, low_rx) = bounded::<String>(QUEUE_LIMIT);
-
         let (result_tx, result_rx) = bounded::<(String, Option<RgbaImage>)>(QUEUE_LIMIT);
 
-        let cache_dir_base = AppConfig::get_cache_dir();
+        let task_queue = Arc::new((Mutex::new(BinaryHeap::<TextureTask>::new()), Condvar::new()));
+        let in_queue = Arc::new(Mutex::new(HashSet::new()));
+
+        let cache_dir = AppConfig::get_cache_dir();
 
         // Workers
         let worker_count = std::cmp::min(6, num_cpus::get());
 
         for _ in 0..worker_count {
-            let high_rx = high_rx.clone();
-            let low_rx = low_rx.clone();
+            let queue_pair = task_queue.clone();
+            let in_queue = in_queue.clone();
             let result_tx = result_tx.clone();
-            let cache_dir = cache_dir_base.clone();
+            let cache_dir = cache_dir.clone();
 
             thread::spawn(move || {
+                #[cfg(windows)]
                 unsafe {
                     use windows::Win32::System::Com::*;
                     let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok();
                 }
 
-                let process = |path: String| {
-                    let img_opt = load_or_generate(&cache_dir, &path, THUMB_SIZE);
-
-                    let _ = result_tx.send((path, img_opt));
-                };
-
                 loop {
-                    if let Ok(path) = high_rx.try_recv() {
-                        process(path);
-                        continue;
-                    }
+                    let task = {
+                        let (lock, cvar) = &*queue_pair;
+                        let mut q = lock.lock().unwrap();
 
-                    select! {
-                        recv(high_rx) -> msg => {
-                            if let Ok(path) = msg { process(path); } else { break; }
+                        while q.is_empty() {
+                            q = cvar.wait(q).unwrap();
                         }
-                        recv(low_rx) -> msg => {
-                            if let Ok(path) = msg { process(path); } else { break; }
-                        }
-                    }
+                        q.pop().unwrap()
+                    };
+
+                    let path = task.path.clone();
+
+                    let img = load_or_generate(&cache_dir, &path, THUMB_SIZE);
+
+                    in_queue.lock().unwrap().remove(&path);
+
+                    let _ = result_tx.send((path.clone(), img));
                 }
             });
         }
@@ -80,7 +87,6 @@ impl TextureManager {
         // Placeholder
         let placeholder = {
             let img = RgbaImage::from_pixel(THUMB_SIZE, THUMB_SIZE, Rgba([80, 80, 80, 255]));
-
             let pixels: Vec<_> = img.pixels().flat_map(|p| p.0).collect();
 
             ctx.load_texture(
@@ -96,12 +102,43 @@ impl TextureManager {
         Self {
             cache: LruCache::new(NonZeroUsize::new(MAX_TEXTURES).unwrap()),
             loading: HashSet::new(),
-            high_tx,
-            low_tx,
-            result_rx,
             failed: HashSet::new(),
+            task_queue,
+            in_queue,
+            visible_set: HashSet::new(),
+            result_rx,
             placeholder,
         }
+    }
+
+    pub fn begin_frame(&mut self) {
+        self.visible_set.clear();
+    }
+
+    pub fn end_frame(&mut self) {
+        let (lock, _) = &*self.task_queue;
+        let mut queue = lock.lock().unwrap();
+
+        if queue.is_empty() {
+            return;
+        }
+
+        let mut in_q = self.in_queue.lock().unwrap();
+        let visible = &self.visible_set;
+
+        let mut tasks: Vec<TextureTask> = std::mem::take(&mut *queue).into_vec();
+
+        tasks.retain(|task| {
+            let keep = task.priority == 0 || visible.contains(&task.path);
+
+            if !keep {
+                in_q.remove(&task.path);
+                self.loading.remove(&task.path);
+            }
+            keep
+        });
+
+        *queue = BinaryHeap::from(tasks);
     }
 
     pub fn update(&mut self, ctx: &Context) {
@@ -114,14 +151,29 @@ impl TextureManager {
             return tex.clone();
         }
 
-        if self.loading.contains(path) || self.failed.contains(path) {
+        // mark visible
+        self.visible_set.insert(path.to_string());
+
+        if self.failed.contains(path) {
             return self.placeholder.clone();
         }
 
-        let path_str = path.to_string();
+        let mut in_q = self.in_queue.lock().unwrap();
 
-        if self.high_tx.try_send(path_str.clone()).is_ok() {
-            self.loading.insert(path_str);
+        if !in_q.contains(path) {
+            let (lock, cvar) = &*self.task_queue;
+            let mut q = lock.lock().unwrap();
+
+            q.push(TextureTask {
+                path: path.to_string(),
+                priority: 0,
+                timestamp: Instant::now(),
+            });
+
+            in_q.insert(path.to_string());
+            self.loading.insert(path.to_string());
+
+            cvar.notify_one();
         }
 
         self.placeholder.clone()
@@ -135,10 +187,23 @@ impl TextureManager {
             return;
         }
 
-        let path_str = path.to_string();
+        let mut in_q = self.in_queue.lock().unwrap();
 
-        if self.low_tx.try_send(path_str.clone()).is_ok() {
-            self.loading.insert(path_str);
+        if !in_q.contains(path) {
+            let (lock, cvar) = &*self.task_queue;
+            let mut q = lock.lock().unwrap();
+
+            q.push(TextureTask {
+                path: path.to_string(),
+                priority: 0,
+                timestamp: Instant::now(),
+            });
+
+            in_q.insert(path.to_string());
+            self.loading.insert(path.to_string());
+
+            // Будим одного свободного воркера
+            cvar.notify_one();
         }
     }
 
@@ -155,11 +220,10 @@ impl TextureManager {
 
             if let Some(img) = img_opt {
                 let size = [img.width() as usize, img.height() as usize];
-                let pixels = img.as_raw();
 
                 let texture = ctx.load_texture(
                     &path,
-                    ColorImage::from_rgba_unmultiplied(size, &pixels),
+                    ColorImage::from_rgba_unmultiplied(size, img.as_raw()),
                     Default::default(),
                 );
 

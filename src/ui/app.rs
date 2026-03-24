@@ -139,6 +139,8 @@ impl MediaApp {
 
 impl eframe::App for MediaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.texture_manager.begin_frame();
+
         self.texture_manager.update(ctx);
         self.handle_scan_events(ctx);
 
@@ -226,7 +228,7 @@ impl eframe::App for MediaApp {
                 .animated(true)
                 .wheel_scroll_multiplier(Vec2::new(2.0, 2.0))
                 .show_rows(ui, row_height, total_rows, |ui, row_range| {
-                    let margin = 2;
+                    let margin = 1;
                     let prefetch_rows = (row_range.start.saturating_sub(margin)..row_range.start)
                         .chain(row_range.end..(row_range.end + margin).min(total_rows));
 
@@ -331,6 +333,8 @@ impl eframe::App for MediaApp {
                     }
                     ui.add_space(10.0);
                 });
+
+            self.texture_manager.end_frame();
         });
     }
 }

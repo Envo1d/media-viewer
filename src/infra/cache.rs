@@ -1,6 +1,6 @@
 use crate::core::windows_thumb::get_thumbnail;
 use image::codecs::jpeg::JpegEncoder;
-use image::RgbaImage;
+use image::{ExtendedColorType, RgbaImage};
 use std::fs;
 use std::hash::Hasher;
 use std::io::BufWriter;
@@ -19,24 +19,32 @@ fn preview_cache_path(cache_dir: &PathBuf, file_path: &str) -> PathBuf {
 }
 
 fn save_as_jpg(path: &PathBuf, img: &RgbaImage) {
-    if let Ok(file) = fs::File::create(path) {
-        let mut writer = BufWriter::new(file);
+    let Ok(file) = fs::File::create(path) else {
+        return;
+    };
+    let writer = BufWriter::new(file);
 
-        let rgb_img = image::DynamicImage::ImageRgba8(img.clone()).into_rgb8();
+    let (w, h) = img.dimensions();
+    let mut encoder = JpegEncoder::new_with_quality(writer, 50);
 
-        let mut encoder = JpegEncoder::new_with_quality(&mut writer, 50);
-        if let Err(_) = encoder.encode_image(&rgb_img) {
-            drop(writer);
-            let _ = fs::remove_file(path);
-        }
-    }
+    let rgb_data: Vec<u8> = img
+        .pixels()
+        .flat_map(|p| [p.0[0], p.0[1], p.0[2]])
+        .collect();
+
+    let _ = encoder.encode(
+        &rgb_data,
+        w,
+        h,
+        ExtendedColorType::from(image::ColorType::Rgb8),
+    );
 }
 
 pub fn load_or_generate(cache_dir: &PathBuf, path: &str, thumb_size: u32) -> Option<RgbaImage> {
     let cache_path = preview_cache_path(cache_dir, path);
 
-    if cache_path.exists() {
-        if let Ok(img) = image::open(&cache_path) {
+    if let Ok(data) = fs::read(&cache_path) {
+        if let Ok(img) = image::load_from_memory_with_format(&data, image::ImageFormat::Jpeg) {
             return Some(img.into_rgba8());
         } else {
             let _ = fs::remove_file(&cache_path);
@@ -44,7 +52,7 @@ pub fn load_or_generate(cache_dir: &PathBuf, path: &str, thumb_size: u32) -> Opt
     }
 
     if let Some(rgba_img) = get_thumbnail(path, thumb_size) {
-        if rgba_img.width() > 64 {
+        if rgba_img.width() > 32 {
             save_as_jpg(&cache_path, &rgba_img);
         }
         return Some(rgba_img);

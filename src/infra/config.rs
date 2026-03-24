@@ -24,7 +24,7 @@ impl Default for AppConfig {
 
 impl AppConfig {
     fn get_proj_dirs() -> ProjectDirs {
-        ProjectDirs::from("com", "envoid", "media_viewer")
+        ProjectDirs::from("com", "envoid", "Oxide View")
             .expect("Unable to locate application system folders")
     }
 
@@ -37,7 +37,7 @@ impl AppConfig {
     pub fn get_db_path() -> PathBuf {
         let dir = Self::get_proj_dirs().data_local_dir().join("db");
         let _ = fs::create_dir_all(&dir);
-        dir.join("media_vault.db")
+        dir.join("vault.db")
     }
 
     pub fn get_cache_dir() -> PathBuf {

@@ -25,7 +25,7 @@ fn save_as_jpg(path: &PathBuf, img: &RgbaImage) {
     let writer = BufWriter::new(file);
 
     let (w, h) = img.dimensions();
-    let mut encoder = JpegEncoder::new_with_quality(writer, 50);
+    let mut encoder = JpegEncoder::new_with_quality(writer, 20);
 
     let rgb_data: Vec<u8> = img
         .pixels()

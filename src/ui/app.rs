@@ -5,6 +5,8 @@ use crate::infra::config::AppConfig;
 use crate::ui::components;
 use crate::ui::scan_manager::ScanManager;
 use crate::ui::texture_manager::TextureManager;
+use egui::TextureHandle;
+use egui_extras::image::load_image_bytes;
 use std::fs;
 
 const MAX_DISPLAYED: usize = 10000;
@@ -23,6 +25,8 @@ pub struct MediaApp {
     // data
     pub scan_manager: ScanManager,
     pub displayed_items: Vec<MediaItem>,
+
+    pub app_icon: Option<TextureHandle>,
 }
 
 impl MediaApp {
@@ -41,6 +45,20 @@ impl MediaApp {
 
         cache::prune_cache(&cache_dir, 500);
 
+        let app_icon = {
+            let icon_bytes = include_bytes!("../../assets/icon.png");
+
+            if let Ok(image) = load_image_bytes(icon_bytes) {
+                Some(
+                    cc.egui_ctx
+                        .load_texture("app_icon", image, Default::default()),
+                )
+            } else {
+                eprintln!("Error: Unable to load assets/icon.png");
+                None
+            }
+        };
+
         let mut app = Self {
             db: Database::new(),
             config,
@@ -50,6 +68,7 @@ impl MediaApp {
             displayed_items: Vec::new(),
             settings_open: None,
             scan_manager: ScanManager::new(),
+            app_icon,
         };
 
         app.refresh_items();
@@ -93,6 +112,12 @@ impl eframe::App for MediaApp {
 
         self.texture_manager.update(ctx);
         self.handle_scan_events(ctx);
+
+        egui::TopBottomPanel::top("custom_bar")
+            .frame(egui::Frame::NONE.fill(ctx.style().visuals.window_fill()))
+            .show(ctx, |ui| {
+                components::custom_title_bar(ui, &self.app_icon);
+            });
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             if ui.button("⚙").clicked() {

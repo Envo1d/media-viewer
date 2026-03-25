@@ -1,7 +1,7 @@
 use crate::core::models::MediaItem;
 use crate::data::migrations::{init_schema_version, run_migrations};
 use crate::infra::config::AppConfig;
-use crate::utils::query_builder::{build_search_query, map_media_item};
+use crate::utils::{build_search_query, map_media_item};
 use rusqlite::Connection;
 
 pub struct Database {

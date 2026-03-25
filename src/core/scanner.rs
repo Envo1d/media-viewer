@@ -1,11 +1,11 @@
 use crate::core::models::{MediaItem, MediaType, ScanEvent};
 use crate::data::db::Database;
-use crate::utils::current_timestamp::current_timestamp;
+use crate::utils::current_timestamp;
 use crossbeam_channel::{unbounded, Receiver, Sender};
+use ignore::WalkBuilder;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use std::{fs, thread};
-use ignore::WalkBuilder;
 
 const BATCH_SIZE: usize = 500;
 
@@ -82,19 +82,19 @@ impl MediaScanner {
         let (tx, rx) = unbounded();
         let mut db = Database::new();
         let scan_id = current_timestamp();
-        
+
         let db_thread = thread::spawn(move || {
             Self::db_worker(&mut db, rx, scan_id);
         });
 
         let root = Arc::new(root_path);
-        
+
         let walker = WalkBuilder::new(&*root)
             .hidden(false)
             .git_ignore(false)
             .threads(num_cpus::get())
             .build_parallel();
-        
+
         walker.run(|| {
             let tx = tx.clone();
             let ui_tx = ui_tx.clone();
@@ -110,7 +110,7 @@ impl MediaScanner {
                 ignore::WalkState::Continue
             })
         });
-        
+
         drop(tx);
         db_thread.join().ok();
         ui_tx.send(ScanEvent::Finished).ok();

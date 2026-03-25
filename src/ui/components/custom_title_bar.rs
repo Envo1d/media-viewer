@@ -1,0 +1,82 @@
+use egui::{Align2, Color32, FontId, PointerButton, Sense, TextureHandle, Vec2};
+
+fn system_button(
+    ui: &mut egui::Ui,
+    text: &str,
+    hover_color: Color32,
+    text_color_hover: Color32,
+) -> egui::Response {
+    let desired_size = Vec2::splat(ui.spacing().interact_size.y);
+
+    let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
+
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        let painter = ui.painter();
+
+        if response.hovered() {
+            painter.rect_filled(rect, 0.0, hover_color);
+        }
+
+        let text_color = if response.hovered() {
+            text_color_hover
+        } else {
+            visuals.text_color()
+        };
+
+        // Центрируем текст (иконку шрифта)
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            text,
+            FontId::monospace(14.0),
+            text_color,
+        );
+    }
+
+    response
+}
+
+pub fn custom_title_bar(ui: &mut egui::Ui, app_icon: &Option<TextureHandle>) {
+    let height = 32.0;
+
+    ui.horizontal(|ui| {
+        ui.set_height(height);
+        ui.add_space(8.0);
+
+        if let Some(icon) = app_icon {
+            ui.add(egui::Image::from_texture(icon).fit_to_exact_size(Vec2::splat(20.0)));
+            ui.add_space(6.0);
+        }
+
+        let rect = ui.available_rect_before_wrap();
+        let response = ui.interact(rect, ui.id().with("drag"), Sense::drag());
+
+        if response.dragged_by(PointerButton::Primary) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().button_padding = Vec2::ZERO;
+
+            let close_hover_bg = Color32::from_rgb(196, 43, 28);
+            let standard_hover_bg = Color32::from_rgba_premultiplied(100, 100, 100, 50);
+
+            if system_button(ui, "❌", close_hover_bg, Color32::WHITE).clicked() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+
+            let is_maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+            let max_symbol = if is_maximized { "🗗" } else { "🗖" };
+            if system_button(ui, max_symbol, standard_hover_bg, Color32::WHITE).clicked() {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+            }
+
+            if system_button(ui, "-", standard_hover_bg, Color32::WHITE).clicked() {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+        });
+    });
+}

@@ -1,5 +1,5 @@
 [package]
-name = "oxide-view"
+name = "nexa"
 version = "0.1.2"
 edition = "2024"
 
@@ -24,3 +24,6 @@ windows = { version = "0.62.2", features = [
 ] }
 lru = { version = "0.16.3" }
 ignore = { version = "0.4.25" }
+
+[build-dependencies]
+winres = { version = "0.1.12" }

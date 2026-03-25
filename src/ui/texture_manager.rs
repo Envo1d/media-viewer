@@ -7,8 +7,9 @@ use image::{Rgba, RgbaImage};
 use lru::LruCache;
 use std::collections::{BinaryHeap, HashSet};
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
+use std::thread::{spawn, JoinHandle};
 use std::time::Instant;
 
 const THUMB_SIZE: u32 = 120;
@@ -26,6 +27,8 @@ pub struct TextureManager {
     // scheduler
     task_queue: Arc<(Mutex<BinaryHeap<TextureTask>>, Condvar)>,
     in_queue: Arc<Mutex<HashSet<String>>>,
+    shutdown: Arc<AtomicBool>,
+    workers: Vec<JoinHandle<()>>,
 
     // visible
     visible_set: HashSet<String>,
@@ -49,13 +52,17 @@ impl TextureManager {
         // Workers
         let worker_count = std::cmp::min(6, num_cpus::get());
 
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut workers = Vec::new();
+
         for _ in 0..worker_count {
             let queue_pair = task_queue.clone();
             let in_queue = in_queue.clone();
             let result_tx = result_tx.clone();
             let cache_dir = cache_dir.clone();
+            let shutdown_flag = shutdown.clone();
 
-            thread::spawn(move || {
+            let handle = spawn(move || {
                 #[cfg(windows)]
                 unsafe {
                     use windows::Win32::System::Com::*;
@@ -63,13 +70,21 @@ impl TextureManager {
                 }
 
                 loop {
+                    if shutdown_flag.load(Ordering::Relaxed) {
+                        break;
+                    }
+
                     let task = {
                         let (lock, cvar) = &*queue_pair;
                         let mut q = lock.lock().unwrap();
 
                         while q.is_empty() {
+                            if shutdown_flag.load(Ordering::Relaxed) {
+                                return;
+                            }
                             q = cvar.wait(q).unwrap();
                         }
+
                         q.pop().unwrap()
                     };
 
@@ -81,7 +96,15 @@ impl TextureManager {
 
                     let _ = result_tx.send((path.clone(), img));
                 }
+
+                #[cfg(windows)]
+                unsafe {
+                    use windows::Win32::System::Com::*;
+                    CoUninitialize();
+                }
             });
+
+            workers.push(handle);
         }
 
         // Placeholder
@@ -108,6 +131,8 @@ impl TextureManager {
             visible_set: HashSet::new(),
             result_rx,
             placeholder,
+            shutdown,
+            workers,
         }
     }
 
@@ -238,6 +263,19 @@ impl TextureManager {
 
         if processed > 0 {
             ctx.request_repaint();
+        }
+    }
+}
+
+impl Drop for TextureManager {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+
+        let (_, cvar) = &*self.task_queue;
+        cvar.notify_all();
+
+        for handle in self.workers.drain(..) {
+            let _ = handle.join();
         }
     }
 }

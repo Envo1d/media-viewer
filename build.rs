@@ -7,7 +7,7 @@ fn main() {
         res.set_icon("assets/icon.ico");
 
         if let Err(e) = res.compile() {
-            eprintln!("Ошибка при компиляции ресурсов Windows: {}", e);
+            eprintln!("Error compiling Windows resources: {}", e);
         }
     }
 }

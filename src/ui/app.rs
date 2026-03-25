@@ -1,15 +1,12 @@
-use crate::core::models::{MediaItem, ScanEvent};
-use crate::core::scanner::MediaScanner;
+use crate::core::models::MediaItem;
 use crate::data::db::Database;
 use crate::infra::cache;
 use crate::infra::config::AppConfig;
 use crate::ui::components;
+use crate::ui::scan_manager::ScanManager;
 use crate::ui::texture_manager::TextureManager;
-use crossbeam_channel::Receiver;
-use std::collections::HashSet;
 use std::fs;
 
-const MAX_LIVE_ITEMS: usize = 5000;
 const MAX_DISPLAYED: usize = 10000;
 
 pub struct MediaApp {
@@ -23,14 +20,9 @@ pub struct MediaApp {
     pub root_path: String,
     pub settings_open: Option<bool>,
 
-    // scanning
-    pub is_scanning: bool,
-    scan_rx: Option<Receiver<ScanEvent>>,
-
     // data
-    live_items: Vec<MediaItem>,
+    pub scan_manager: ScanManager,
     pub displayed_items: Vec<MediaItem>,
-    seen_paths: HashSet<String>,
 }
 
 impl MediaApp {
@@ -53,18 +45,11 @@ impl MediaApp {
             db: Database::new(),
             config,
             texture_manager: TextureManager::new(&cc.egui_ctx),
-
             search_input: String::new(),
             root_path,
-
-            scan_rx: None,
-            is_scanning: false,
-
-            live_items: Vec::new(),
             displayed_items: Vec::new(),
-            seen_paths: HashSet::new(),
-
             settings_open: None,
+            scan_manager: ScanManager::new(),
         };
 
         app.refresh_items();
@@ -72,57 +57,23 @@ impl MediaApp {
         app
     }
 
-    pub fn start_scan(&mut self) {
-        let (tx, rx) = crossbeam_channel::unbounded();
-
-        self.scan_rx = Some(rx);
-        self.is_scanning = true;
-
-        self.live_items.clear();
-        self.displayed_items.clear();
-        self.seen_paths.clear();
-
-        MediaScanner::start(self.root_path.clone(), tx);
-    }
-
     fn handle_scan_events(&mut self, ctx: &egui::Context) {
-        if let Some(rx) = &self.scan_rx {
-            let mut added = 0;
-            let mut finished = false;
+        let (new_items, finished) = self.scan_manager.update();
 
-            for event in rx.try_iter() {
-                match event {
-                    ScanEvent::Item(item) => {
-                        if self.seen_paths.insert(item.path.clone()) {
-                            self.live_items.push(item.clone());
-                            self.displayed_items.push(item);
+        if !new_items.is_empty() {
+            self.displayed_items.extend(new_items);
 
-                            added += 1;
-
-                            if self.displayed_items.len() > MAX_DISPLAYED {
-                                self.displayed_items.drain(0..1000);
-                            }
-
-                            if self.live_items.len() > MAX_LIVE_ITEMS {
-                                self.live_items.remove(0);
-                            }
-                        }
-                    }
-
-                    ScanEvent::Finished => {
-                        finished = true;
-                    }
-                }
+            if self.displayed_items.len() > MAX_DISPLAYED {
+                let to_remove = self.displayed_items.len() - MAX_DISPLAYED;
+                self.displayed_items.drain(0..to_remove);
             }
 
-            if finished {
-                self.is_scanning = false;
-                self.refresh_items();
-            }
+            ctx.request_repaint();
+        }
 
-            if added > 0 || finished {
-                ctx.request_repaint();
-            }
+        if finished {
+            self.refresh_items();
+            ctx.request_repaint();
         }
     }
 

@@ -30,10 +30,10 @@ pub fn settings_modal(app: &mut MediaApp, ctx: &egui::Context) {
 
             ui.horizontal(|ui| {
                 if ui.button("Сканировать").clicked() {
-                    app.start_scan();
+                    app.scan_manager.start(app.root_path.clone());
                 }
 
-                if app.is_scanning {
+                if app.scan_manager.is_scanning {
                     ui.spinner();
                 }
             });

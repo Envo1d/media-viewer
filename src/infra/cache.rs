@@ -1,50 +1,35 @@
 use crate::core::windows_thumb::get_thumbnail;
-use image::codecs::jpeg::JpegEncoder;
-use image::{ExtendedColorType, RgbaImage};
+use image::RgbaImage;
 use std::fs;
 use std::hash::Hasher;
-use std::io::BufWriter;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use twox_hash::XxHash64;
+use webp::Encoder;
 
 fn preview_cache_path(cache_dir: &PathBuf, file_path: &str) -> PathBuf {
     let mut hasher = XxHash64::with_seed(0);
 
     hasher.write(file_path.as_bytes());
 
-    let hash = format!("{:016x}.jpg", hasher.finish());
+    let hash = format!("{:016x}.webp", hasher.finish());
 
     cache_dir.join(hash)
 }
 
-fn save_as_jpg(path: &PathBuf, img: &RgbaImage) {
-    let Ok(file) = fs::File::create(path) else {
-        return;
-    };
-    let writer = BufWriter::new(file);
+fn save_as_webp_lossy(path: &PathBuf, img: &RgbaImage, quality: f32) {
+    let encoder = Encoder::from_rgba(img, img.width(), img.height());
+    let quality = quality.min(100.0).max(0.0);
+    let webp_data = encoder.encode(quality);
 
-    let (w, h) = img.dimensions();
-    let mut encoder = JpegEncoder::new_with_quality(writer, 20);
-
-    let rgb_data: Vec<u8> = img
-        .pixels()
-        .flat_map(|p| [p.0[0], p.0[1], p.0[2]])
-        .collect();
-
-    let _ = encoder.encode(
-        &rgb_data,
-        w,
-        h,
-        ExtendedColorType::from(image::ColorType::Rgb8),
-    );
+    let _ = fs::write(path, &*webp_data);
 }
 
 pub fn load_or_generate(cache_dir: &PathBuf, path: &str, thumb_size: u32) -> Option<RgbaImage> {
     let cache_path = preview_cache_path(cache_dir, path);
 
     if let Ok(data) = fs::read(&cache_path) {
-        if let Ok(img) = image::load_from_memory_with_format(&data, image::ImageFormat::Jpeg) {
+        if let Ok(img) = image::load_from_memory_with_format(&data, image::ImageFormat::WebP) {
             return Some(img.into_rgba8());
         } else {
             let _ = fs::remove_file(&cache_path);
@@ -53,7 +38,7 @@ pub fn load_or_generate(cache_dir: &PathBuf, path: &str, thumb_size: u32) -> Opt
 
     if let Some(rgba_img) = get_thumbnail(path, thumb_size) {
         if rgba_img.width() > 32 {
-            save_as_jpg(&cache_path, &rgba_img);
+            save_as_webp_lossy(&cache_path, &rgba_img, 75.0);
         }
         return Some(rgba_img);
     }

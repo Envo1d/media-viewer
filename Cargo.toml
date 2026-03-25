@@ -1,5 +1,5 @@
 [package]
-name = "nexa"
+name = "Nexa"
 version = "0.1.2"
 edition = "2024"
 
@@ -7,6 +7,7 @@ edition = "2024"
 egui = { version = "0.33.3" }
 eframe = { version = "0.33.3" }
 image = { version = "0.25.10" }
+webp = { version = "0.3.1" }
 open = { version = "5.3.3" }
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 rfd = { version = "0.17.2" }

@@ -24,7 +24,7 @@ impl Default for AppConfig {
 
 impl AppConfig {
     fn get_proj_dirs() -> ProjectDirs {
-        ProjectDirs::from("com", "envoid", "Oxide View")
+        ProjectDirs::from("com", "envoid", "Nexa")
             .expect("Unable to locate application system folders")
     }
 

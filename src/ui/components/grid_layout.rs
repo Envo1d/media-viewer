@@ -10,7 +10,7 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
     // params
     let item_size = 200.0;
     let spacing = 10.0;
-    let available_width = ui.available_width() * 0.8;
+    let available_width = ui.available_width() * 0.9;
     let columns = ((available_width + spacing) / (item_size + spacing))
         .floor()
         .max(1.0) as usize;
@@ -35,8 +35,6 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
                     }
                 }
             }
-
-            ui.add_space(spacing);
 
             for row in row_range {
                 ui.horizontal(|ui| {

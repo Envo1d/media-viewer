@@ -1,4 +1,5 @@
-use egui::{Align2, Color32, FontId, PointerButton, Sense, TextureHandle, Vec2};
+use crate::ui::app::MediaApp;
+use egui::{Align2, Color32, FontId, PointerButton, Sense, Vec2};
 
 fn system_button(
     ui: &mut egui::Ui,
@@ -6,7 +7,7 @@ fn system_button(
     hover_color: Color32,
     text_color_hover: Color32,
 ) -> egui::Response {
-    let desired_size = Vec2::splat(ui.spacing().interact_size.y);
+    let desired_size = Vec2::new(30.0, ui.available_height());
 
     let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
 
@@ -24,7 +25,6 @@ fn system_button(
             visuals.text_color()
         };
 
-        // Центрируем текст (иконку шрифта)
         painter.text(
             rect.center(),
             Align2::CENTER_CENTER,
@@ -37,15 +37,16 @@ fn system_button(
     response
 }
 
-pub fn custom_title_bar(ui: &mut egui::Ui, app_icon: &Option<TextureHandle>) {
+pub fn custom_title_bar(ui: &mut egui::Ui, app: &mut MediaApp) {
     let height = 32.0;
+    let app_icon = app.app_icon.clone();
 
     ui.horizontal(|ui| {
         ui.set_height(height);
         ui.add_space(8.0);
 
         if let Some(icon) = app_icon {
-            ui.add(egui::Image::from_texture(icon).fit_to_exact_size(Vec2::splat(20.0)));
+            ui.add(egui::Image::from_texture(&icon).fit_to_exact_size(Vec2::splat(20.0)));
             ui.add_space(6.0);
         }
 
@@ -59,23 +60,30 @@ pub fn custom_title_bar(ui: &mut egui::Ui, app_icon: &Option<TextureHandle>) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().button_padding = Vec2::ZERO;
 
-            let close_hover_bg = Color32::from_rgb(196, 43, 28);
-            let standard_hover_bg = Color32::from_rgba_premultiplied(100, 100, 100, 50);
+            let close_hover_bg = Color32::from_rgb(210, 45, 57);
+            let standard_hover_bg = Color32::from_rgb(29, 29, 30);
+            let icon_color = Color32::from_rgb(251, 251, 251);
 
-            if system_button(ui, "❌", close_hover_bg, Color32::WHITE).clicked() {
+            if system_button(ui, "❌", close_hover_bg, icon_color).clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
 
             let is_maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
             let max_symbol = if is_maximized { "🗗" } else { "🗖" };
-            if system_button(ui, max_symbol, standard_hover_bg, Color32::WHITE).clicked() {
+            if system_button(ui, max_symbol, standard_hover_bg, icon_color).clicked() {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
             }
 
-            if system_button(ui, "-", standard_hover_bg, Color32::WHITE).clicked() {
+            if system_button(ui, "-", standard_hover_bg, icon_color).clicked() {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+
+            ui.add_space(10.0);
+
+            if system_button(ui, "⚙", standard_hover_bg, icon_color).clicked() {
+                app.settings_open = Some(true);
             }
         });
     });

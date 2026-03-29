@@ -1,7 +1,9 @@
 use crate::ui::app::MediaApp;
 use rfd::FileDialog;
 
-pub fn settings_modal(app: &mut MediaApp, ctx: &egui::Context) {
+pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
+    let ctx = ui.ctx();
+
     let mut is_open = app.settings_open.unwrap_or(false);
     if !is_open {
         return;

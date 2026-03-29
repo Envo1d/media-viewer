@@ -2,10 +2,15 @@ use crate::core::models::MediaItem;
 use crate::data::db::Database;
 use crate::infra::cache;
 use crate::infra::config::AppConfig;
+use crate::ui::colors::C_PRIMARY_BG;
 use crate::ui::components;
+use crate::ui::components::sidebar::sidebar;
+use crate::ui::fonts::setup_fonts;
 use crate::ui::scan_manager::ScanManager;
+use crate::ui::styles::apply_style;
 use crate::ui::texture_manager::TextureManager;
-use egui::TextureHandle;
+use eframe::Frame;
+use egui::{Margin, TextureHandle, Ui};
 use egui_extras::image::load_image_bytes;
 use std::fs;
 
@@ -18,7 +23,7 @@ pub struct MediaApp {
     pub texture_manager: TextureManager,
 
     // UI state
-    search_input: String,
+    pub search_input: String,
     pub root_path: String,
     pub settings_open: Option<bool>,
 
@@ -31,6 +36,10 @@ pub struct MediaApp {
 
 impl MediaApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        setup_fonts(&cc.egui_ctx);
+        egui_extras::install_image_loaders(&cc.egui_ctx);
+        apply_style(&cc.egui_ctx);
+
         let config = AppConfig::load();
 
         let root_path = config
@@ -96,7 +105,7 @@ impl MediaApp {
         }
     }
 
-    fn refresh_items(&mut self) {
+    pub fn refresh_items(&mut self) {
         const PAGE_SIZE: usize = 500;
         self.displayed_items = if self.search_input.trim().is_empty() {
             self.db.query(PAGE_SIZE, 0)
@@ -107,33 +116,47 @@ impl MediaApp {
 }
 
 impl eframe::App for MediaApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
+        let ctx = ui.clone();
+
         self.texture_manager.begin_frame();
 
-        self.texture_manager.update(ctx);
-        self.handle_scan_events(ctx);
+        self.texture_manager.update(&ctx);
+        self.handle_scan_events(&ctx);
 
-        egui::TopBottomPanel::top("custom_bar")
-            .frame(egui::Frame::NONE.fill(ctx.style().visuals.window_fill()))
-            .show(ctx, |ui| {
-                components::custom_title_bar(ui, &self.app_icon);
+        let window_frame = egui::Frame::NONE
+            .fill(C_PRIMARY_BG)
+            .stroke(ctx.global_style().visuals.window_stroke());
+
+        egui::CentralPanel::default()
+            .frame(window_frame)
+            .show_inside(ui, |ui| {
+                egui::Panel::top("custom_bar")
+                    .frame(egui::Frame::NONE.corner_radius(egui::CornerRadius {
+                        nw: 20,
+                        ne: 20,
+                        sw: 0,
+                        se: 0,
+                    }))
+                    .show_inside(ui, |ui| {
+                        components::custom_title_bar(ui, self);
+                    });
+
+                egui::Panel::left("sidebar")
+                    .exact_size(240.0)
+                    .frame(egui::Frame::NONE.inner_margin(Margin::symmetric(10, 10)))
+                    .resizable(false)
+                    .show_inside(ui, |ui| {
+                        sidebar(self, ui);
+                    });
+
+                components::settings_modal(self, ui);
+
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    components::grid_layout(self, ui);
+
+                    self.texture_manager.end_frame();
+                });
             });
-
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            if ui.button("⚙").clicked() {
-                self.settings_open = Some(true);
-            }
-            ui.text_edit_singleline(&mut self.search_input);
-        });
-
-        components::settings_modal(self, ctx);
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
-
-            components::grid_layout(self, ui);
-
-            self.texture_manager.end_frame();
-        });
     }
 }

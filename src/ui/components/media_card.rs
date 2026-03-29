@@ -1,6 +1,7 @@
 use crate::core::models::{MediaItem, MediaType};
+use crate::ui::colors::{ACCENT_BLUE, TEXT_HIGHLIGHT, TEXT_LIGHT};
 use crate::ui::texture_manager::TextureManager;
-use egui::{hex_color, Color32, FontId, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
+use egui::{Align2, Color32, FontId, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 pub fn media_card(
     ui: &mut Ui,
@@ -39,21 +40,19 @@ pub fn media_card(
             Vec2::splat(icon_size),
         );
 
-        painter.rect_filled(icon_rect, 6.0, hex_color!("#3D60A3"));
-
+        painter.rect_filled(icon_rect, 6.0, ACCENT_BLUE);
         painter.rect_stroke(
             icon_rect,
             6.0,
-            Stroke::new(0.5, Color32::WHITE),
+            Stroke::new(1.0, TEXT_HIGHLIGHT),
             StrokeKind::Inside,
         );
-
         painter.text(
             icon_rect.center(),
-            egui::Align2::CENTER_CENTER,
+            Align2::CENTER_CENTER,
             "▶",
             FontId::proportional(14.0),
-            Color32::WHITE,
+            TEXT_LIGHT,
         );
     }
 

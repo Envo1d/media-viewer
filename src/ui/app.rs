@@ -1,5 +1,5 @@
-use crate::core::models::MediaItem;
-use crate::data::db::Database;
+use crate::core::models::{DbCommand, MediaItem};
+use crate::data::db_worker::start_db_worker;
 use crate::infra::cache;
 use crate::infra::config::AppConfig;
 use crate::ui::colors::C_PRIMARY_BG;
@@ -9,6 +9,7 @@ use crate::ui::fonts::setup_fonts;
 use crate::ui::scan_manager::ScanManager;
 use crate::ui::styles::apply_style;
 use crate::ui::texture_manager::TextureManager;
+use crossbeam_channel::Sender;
 use eframe::Frame;
 use egui::{Margin, TextureHandle, Ui};
 use egui_extras::image::load_image_bytes;
@@ -18,7 +19,7 @@ const MAX_DISPLAYED: usize = 10000;
 
 pub struct MediaApp {
     // core
-    db: Database,
+    db_tx: Sender<DbCommand>,
     pub config: AppConfig,
     pub texture_manager: TextureManager,
 
@@ -68,15 +69,18 @@ impl MediaApp {
             }
         };
 
+        let db_tx = start_db_worker();
+        let db_tx_for_scan = db_tx.clone();
+
         let mut app = Self {
-            db: Database::new(),
+            db_tx,
             config,
             texture_manager: TextureManager::new(&cc.egui_ctx),
             search_input: String::new(),
             root_path,
             displayed_items: Vec::new(),
             settings_open: None,
-            scan_manager: ScanManager::new(),
+            scan_manager: ScanManager::new(db_tx_for_scan),
             app_icon,
         };
 
@@ -107,11 +111,32 @@ impl MediaApp {
 
     pub fn refresh_items(&mut self) {
         const PAGE_SIZE: usize = 500;
-        self.displayed_items = if self.search_input.trim().is_empty() {
-            self.db.query(PAGE_SIZE, 0)
+        if self.search_input.trim().is_empty() {
+            let (resp_tx, resp_rx) = crossbeam_channel::bounded(1);
+
+            let _ = self.db_tx.send(DbCommand::Query {
+                limit: PAGE_SIZE,
+                offset: 0,
+                resp: resp_tx,
+            });
+
+            if let Ok(items) = resp_rx.recv() {
+                self.displayed_items = items;
+            }
         } else {
-            self.db.search(&self.search_input, PAGE_SIZE, 0)
-        };
+            let (resp_tx, resp_rx) = crossbeam_channel::bounded(1);
+
+            let _ = self.db_tx.send(DbCommand::Search {
+                query: self.search_input.clone(),
+                limit: PAGE_SIZE,
+                offset: 0,
+                resp: resp_tx,
+            });
+
+            if let Ok(items) = resp_rx.recv() {
+                self.displayed_items = items;
+            }
+        }
     }
 }
 

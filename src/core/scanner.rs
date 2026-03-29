@@ -1,7 +1,6 @@
-use crate::core::models::{MediaItem, MediaType, ScanEvent};
-use crate::data::db::Database;
+use crate::core::models::{DbCommand, MediaItem, MediaType, ScanEvent};
 use crate::utils::current_timestamp;
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{unbounded, Sender};
 use ignore::WalkBuilder;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
@@ -12,26 +11,6 @@ const BATCH_SIZE: usize = 500;
 pub struct MediaScanner;
 
 impl MediaScanner {
-    // === DB WORKER ===
-    fn db_worker(db: &mut Database, rx: Receiver<MediaItem>, scan_id: i64) {
-        let mut batch = Vec::with_capacity(BATCH_SIZE);
-
-        for item in rx {
-            batch.push(item);
-
-            if batch.len() >= BATCH_SIZE {
-                db.upsert_batch(&batch, scan_id);
-                batch.clear();
-            }
-        }
-
-        if !batch.is_empty() {
-            db.upsert_batch(&batch, scan_id);
-        }
-
-        db.delete_not_seen(scan_id);
-    }
-
     // === FILE PROCESSING ===
     fn process_entry(root_path: &str, entry: &ignore::DirEntry) -> Option<MediaItem> {
         let path = entry.path();
@@ -78,13 +57,33 @@ impl MediaScanner {
         })
     }
 
-    fn run(root_path: String, ui_tx: Sender<ScanEvent>) {
-        let (tx, rx) = unbounded();
-        let mut db = Database::new();
+    fn run(root_path: String, ui_tx: Sender<ScanEvent>, db_tx: Sender<DbCommand>) {
         let scan_id = current_timestamp();
+        let (tx, rx) = unbounded::<MediaItem>();
 
-        let db_thread = thread::spawn(move || {
-            Self::db_worker(&mut db, rx, scan_id);
+        // === AGGREGATOR THREAD ===
+        let db_tx_clone = db_tx.clone();
+        let aggregator = thread::spawn(move || {
+            let mut batch = Vec::with_capacity(BATCH_SIZE);
+
+            for item in rx {
+                batch.push(item);
+
+                if batch.len() >= BATCH_SIZE {
+                    let to_send = std::mem::take(&mut batch);
+                    db_tx_clone
+                        .send(DbCommand::UpsertBatch(to_send, scan_id))
+                        .ok();
+                }
+            }
+
+            if !batch.is_empty() {
+                db_tx_clone
+                    .send(DbCommand::UpsertBatch(batch, scan_id))
+                    .ok();
+            }
+
+            db_tx_clone.send(DbCommand::DeleteNotSeen(scan_id)).ok();
         });
 
         let root = Arc::new(root_path);
@@ -103,22 +102,26 @@ impl MediaScanner {
             Box::new(move |result| {
                 if let Ok(entry) = result {
                     if let Some(item) = Self::process_entry(&root, &entry) {
-                        tx.send(item.clone()).ok();
-                        ui_tx.send(ScanEvent::Item(item)).ok();
+                        ui_tx.send(ScanEvent::Item(item.clone())).ok();
+
+                        tx.send(item).ok();
                     }
                 }
+
                 ignore::WalkState::Continue
             })
         });
 
-        drop(tx);
-        db_thread.join().ok();
+        drop(tx); // важно!
+
+        aggregator.join().ok();
+
         ui_tx.send(ScanEvent::Finished).ok();
     }
 
-    pub fn start(root_path: String, ui_tx: Sender<ScanEvent>) {
+    pub fn start(root_path: String, ui_tx: Sender<ScanEvent>, db_tx: Sender<DbCommand>) {
         thread::spawn(move || {
-            Self::run(root_path, ui_tx);
+            Self::run(root_path, ui_tx, db_tx);
         });
     }
 }

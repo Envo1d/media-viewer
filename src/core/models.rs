@@ -1,5 +1,22 @@
+use crossbeam_channel::Sender;
 use std::cmp::Ordering;
 use std::time::Instant;
+
+pub enum DbCommand {
+    UpsertBatch(Vec<MediaItem>, i64),
+    DeleteNotSeen(i64),
+    Query {
+        limit: usize,
+        offset: usize,
+        resp: Sender<Vec<MediaItem>>,
+    },
+    Search {
+        query: String,
+        limit: usize,
+        offset: usize,
+        resp: Sender<Vec<MediaItem>>,
+    },
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MediaItem {

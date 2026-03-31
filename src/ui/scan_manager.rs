@@ -32,18 +32,12 @@ impl ScanManager {
         MediaScanner::start(root_path, tx, self.db_tx.clone());
     }
 
-    pub fn update(&mut self) -> (Vec<MediaItem>, bool) {
-        let mut new_items = Vec::new();
+    pub fn update(&mut self) -> bool {
         let mut finished = false;
 
         if let Some(rx) = &self.rx {
             for event in rx.try_iter() {
                 match event {
-                    ScanEvent::Item(item) => {
-                        if self.seen_paths.insert(item.path.clone()) {
-                            new_items.push(item);
-                        }
-                    }
                     ScanEvent::Finished => {
                         finished = true;
                     }
@@ -56,6 +50,6 @@ impl ScanManager {
             self.rx = None;
         }
 
-        (new_items, finished)
+        finished
     }
 }

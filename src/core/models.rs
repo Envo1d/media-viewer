@@ -6,15 +6,17 @@ pub enum DbCommand {
     UpsertBatch(Vec<MediaItem>, i64),
     DeleteNotSeen(i64),
     Query {
+        id: u64,
         limit: usize,
         offset: usize,
-        resp: Sender<Vec<MediaItem>>,
+        resp: Sender<(u64, Vec<MediaItem>)>,
     },
     Search {
+        id: u64,
         query: String,
         limit: usize,
         offset: usize,
-        resp: Sender<Vec<MediaItem>>,
+        resp: Sender<(u64, Vec<MediaItem>)>,
     },
 }
 
@@ -36,7 +38,6 @@ pub enum MediaType {
 
 #[derive(Clone)]
 pub enum ScanEvent {
-    Item(MediaItem),
     Finished,
 }
 

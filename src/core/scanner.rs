@@ -96,14 +96,11 @@ impl MediaScanner {
 
         walker.run(|| {
             let tx = tx.clone();
-            let ui_tx = ui_tx.clone();
             let root = root.clone();
 
             Box::new(move |result| {
                 if let Ok(entry) = result {
                     if let Some(item) = Self::process_entry(&root, &entry) {
-                        ui_tx.send(ScanEvent::Item(item.clone())).ok();
-
                         tx.send(item).ok();
                     }
                 }
@@ -112,7 +109,7 @@ impl MediaScanner {
             })
         });
 
-        drop(tx); // важно!
+        drop(tx);
 
         aggregator.join().ok();
 

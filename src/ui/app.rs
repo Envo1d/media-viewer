@@ -9,13 +9,12 @@ use crate::ui::fonts::setup_fonts;
 use crate::ui::scan_manager::ScanManager;
 use crate::ui::styles::apply_style;
 use crate::ui::texture_manager::TextureManager;
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Receiver, Sender};
 use eframe::Frame;
 use egui::{Margin, TextureHandle, Ui};
 use egui_extras::image::load_image_bytes;
 use std::fs;
-
-const MAX_DISPLAYED: usize = 10000;
+use std::time::{Duration, Instant};
 
 pub struct MediaApp {
     // core
@@ -31,6 +30,12 @@ pub struct MediaApp {
     // data
     pub scan_manager: ScanManager,
     pub displayed_items: Vec<MediaItem>,
+
+    pending_query: Option<Receiver<(u64, Vec<MediaItem>)>>,
+    current_query_id: u64,
+    next_query_id: u64,
+    pub last_input_time: Instant,
+    debounce_delay: Duration,
 
     pub app_icon: Option<TextureHandle>,
 }
@@ -82,6 +87,11 @@ impl MediaApp {
             settings_open: None,
             scan_manager: ScanManager::new(db_tx_for_scan),
             app_icon,
+            pending_query: None,
+            current_query_id: 0,
+            next_query_id: 1,
+            last_input_time: Instant::now(),
+            debounce_delay: Duration::from_millis(300),
         };
 
         app.refresh_items();
@@ -90,18 +100,7 @@ impl MediaApp {
     }
 
     fn handle_scan_events(&mut self, ctx: &egui::Context) {
-        let (new_items, finished) = self.scan_manager.update();
-
-        if !new_items.is_empty() {
-            self.displayed_items.extend(new_items);
-
-            if self.displayed_items.len() > MAX_DISPLAYED {
-                let to_remove = self.displayed_items.len() - MAX_DISPLAYED;
-                self.displayed_items.drain(0..to_remove);
-            }
-
-            ctx.request_repaint();
-        }
+        let finished = self.scan_manager.update();
 
         if finished {
             self.refresh_items();
@@ -109,33 +108,81 @@ impl MediaApp {
         }
     }
 
-    pub fn refresh_items(&mut self) {
+    fn send_query(&mut self) {
         const PAGE_SIZE: usize = 500;
+
+        let (resp_tx, resp_rx) = crossbeam_channel::bounded(1);
+
+        let query_id = self.next_query_id;
+        self.next_query_id += 1;
+
+        self.current_query_id = query_id;
+
         if self.search_input.trim().is_empty() {
-            let (resp_tx, resp_rx) = crossbeam_channel::bounded(1);
-
-            let _ = self.db_tx.send(DbCommand::Query {
-                limit: PAGE_SIZE,
-                offset: 0,
-                resp: resp_tx,
-            });
-
-            if let Ok(items) = resp_rx.recv() {
-                self.displayed_items = items;
-            }
+            self.db_tx
+                .send(DbCommand::Query {
+                    id: query_id,
+                    limit: PAGE_SIZE,
+                    offset: 0,
+                    resp: resp_tx,
+                })
+                .ok();
         } else {
-            let (resp_tx, resp_rx) = crossbeam_channel::bounded(1);
+            self.db_tx
+                .send(DbCommand::Search {
+                    id: query_id,
+                    query: self.search_input.clone(),
+                    limit: PAGE_SIZE,
+                    offset: 0,
+                    resp: resp_tx,
+                })
+                .ok();
+        }
 
-            let _ = self.db_tx.send(DbCommand::Search {
-                query: self.search_input.clone(),
-                limit: PAGE_SIZE,
-                offset: 0,
-                resp: resp_tx,
-            });
+        self.pending_query = Some(resp_rx);
+    }
 
-            if let Ok(items) = resp_rx.recv() {
-                self.displayed_items = items;
+    fn handle_search_input(&mut self) {
+        let now = Instant::now();
+
+        if now.duration_since(self.last_input_time) >= self.debounce_delay {
+            self.send_query();
+        }
+    }
+
+    pub fn refresh_items(&mut self) {
+        self.last_input_time = Instant::now();
+
+        self.send_query();
+    }
+
+    fn poll_db(&mut self, ctx: &egui::Context) {
+        let mut need_repaint = false;
+
+        if let Some(rx) = &self.pending_query {
+            match rx.try_recv() {
+                Ok((id, items)) => {
+                    if id == self.current_query_id {
+                        self.displayed_items = items;
+                    }
+
+                    self.pending_query = None;
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => {
+                    // waiting
+                }
+                Err(_) => {
+                    self.pending_query = None;
+                }
             }
+
+            if self.pending_query.is_some() {
+                need_repaint = true;
+            }
+        }
+
+        if need_repaint {
+            ctx.request_repaint();
         }
     }
 }
@@ -143,6 +190,9 @@ impl MediaApp {
 impl eframe::App for MediaApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
         let ctx = ui.clone();
+
+        self.poll_db(&ctx);
+        self.handle_search_input();
 
         self.texture_manager.begin_frame();
 

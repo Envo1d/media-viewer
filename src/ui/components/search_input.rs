@@ -1,6 +1,7 @@
 use crate::ui::app::MediaApp;
 use crate::ui::colors::{C_INPUT_BG, C_TEXT};
 use egui::{CornerRadius, Frame, Margin};
+use std::time::Instant;
 
 pub fn search_input(app: &mut MediaApp, ui: &mut egui::Ui) {
     ui.allocate_ui_with_layout(
@@ -29,7 +30,7 @@ pub fn search_input(app: &mut MediaApp, ui: &mut egui::Ui) {
                     );
 
                     if response.changed() {
-                        app.refresh_items();
+                        app.last_input_time = Instant::now();
                     }
                 });
 

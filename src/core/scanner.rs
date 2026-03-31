@@ -12,7 +12,7 @@ pub struct MediaScanner;
 
 impl MediaScanner {
     // === FILE PROCESSING ===
-    fn process_entry(root_path: &str, entry: &ignore::DirEntry) -> Option<MediaItem> {
+    fn process_entry(root_path: &str, entry: &ignore::DirEntry) -> Option<Arc<MediaItem>> {
         let path = entry.path();
 
         if !path.is_file() {
@@ -47,19 +47,19 @@ impl MediaScanner {
             return None;
         }
 
-        Some(MediaItem {
+        Some(Arc::new(MediaItem {
             path: path.to_string_lossy().to_string(),
             name: path.file_name()?.to_string_lossy().to_string(),
             media_type,
             category: parts[0].to_string(),
             author: parts[1].to_string(),
             modified,
-        })
+        }))
     }
 
     fn run(root_path: String, ui_tx: Sender<ScanEvent>, db_tx: Sender<DbCommand>) {
         let scan_id = current_timestamp();
-        let (tx, rx) = unbounded::<MediaItem>();
+        let (tx, rx) = unbounded::<Arc<MediaItem>>();
 
         // === AGGREGATOR THREAD ===
         let db_tx_clone = db_tx.clone();

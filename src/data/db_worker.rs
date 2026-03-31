@@ -1,6 +1,7 @@
 use crate::core::models::DbCommand;
 use crate::data::db::Database;
 use crossbeam_channel::Sender;
+use std::sync::Arc;
 
 pub fn start_db_worker() -> Sender<DbCommand> {
     let (tx, rx) = crossbeam_channel::bounded::<DbCommand>(100);
@@ -25,7 +26,8 @@ pub fn start_db_worker() -> Sender<DbCommand> {
                     resp,
                 } => {
                     let result = db.query(limit, offset);
-                    let _ = resp.send((id, result));
+                    let processed_result = result.into_iter().map(Arc::new).collect();
+                    let _ = resp.send((id, processed_result));
                 }
 
                 DbCommand::Search {
@@ -36,7 +38,8 @@ pub fn start_db_worker() -> Sender<DbCommand> {
                     resp,
                 } => {
                     let result = db.search(&query, limit, offset);
-                    let _ = resp.send((id, result));
+                    let processed_result = result.into_iter().map(Arc::new).collect();
+                    let _ = resp.send((id, processed_result));
                 }
             })) {
                 eprintln!("DB worker panic: {:?}", e);

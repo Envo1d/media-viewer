@@ -1,22 +1,23 @@
 use crossbeam_channel::Sender;
 use std::cmp::Ordering;
+use std::sync::Arc;
 use std::time::Instant;
 
 pub enum DbCommand {
-    UpsertBatch(Vec<MediaItem>, i64),
+    UpsertBatch(Vec<Arc<MediaItem>>, i64),
     DeleteNotSeen(i64),
     Query {
         id: u64,
         limit: usize,
         offset: usize,
-        resp: Sender<(u64, Vec<MediaItem>)>,
+        resp: Sender<(u64, Vec<Arc<MediaItem>>)>,
     },
     Search {
         id: u64,
         query: String,
         limit: usize,
         offset: usize,
-        resp: Sender<(u64, Vec<MediaItem>)>,
+        resp: Sender<(u64, Vec<Arc<MediaItem>>)>,
     },
 }
 

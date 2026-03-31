@@ -14,6 +14,7 @@ use eframe::Frame;
 use egui::{Margin, TextureHandle, Ui};
 use egui_extras::image::load_image_bytes;
 use std::fs;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub struct MediaApp {
@@ -29,9 +30,9 @@ pub struct MediaApp {
 
     // data
     pub scan_manager: ScanManager,
-    pub displayed_items: Vec<MediaItem>,
+    pub displayed_items: Vec<Arc<MediaItem>>,
 
-    pending_query: Option<Receiver<(u64, Vec<MediaItem>)>>,
+    pending_query: Option<Receiver<(u64, Vec<Arc<MediaItem>>)>>,
     current_query_id: u64,
     next_query_id: u64,
     pub last_input_time: Instant,

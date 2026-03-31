@@ -3,6 +3,7 @@ use crate::data::migrations::{init_schema_version, run_migrations};
 use crate::infra::config::AppConfig;
 use crate::utils::{build_search_query, map_media_item};
 use rusqlite::Connection;
+use std::sync::Arc;
 
 pub struct Database {
     conn: Connection,
@@ -24,7 +25,7 @@ impl Database {
         Self { conn }
     }
 
-    pub fn upsert_batch(&mut self, items: &[MediaItem], scan_id: i64) {
+    pub fn upsert_batch(&mut self, items: &[Arc<MediaItem>], scan_id: i64) {
         let tx = self.conn.transaction().unwrap();
 
         {
@@ -41,6 +42,8 @@ impl Database {
             ).unwrap();
 
             for item in items {
+                let item = item.as_ref();
+
                 stmt.execute(rusqlite::params![
                     item.path,
                     item.name,

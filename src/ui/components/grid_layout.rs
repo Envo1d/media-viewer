@@ -4,9 +4,6 @@ use eframe::emath::Vec2;
 use egui::Ui;
 
 pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
-    // data
-    let items = &app.displayed_items;
-
     // params
     let item_size = 200.0;
     let spacing = 10.0;
@@ -17,9 +14,11 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
     let total_width = columns as f32 * item_size + (columns - 1) as f32 * spacing;
     let side_padding = ((ui.available_width() - total_width) / 2.0).max(0.0);
     let row_height = item_size + spacing;
-    let total_rows = (items.len() + columns - 1) / columns;
+    let total_rows = (app.displayed_items.len() + columns - 1) / columns;
 
-    egui::ScrollArea::vertical()
+    let items = &app.displayed_items;
+
+    let output = egui::ScrollArea::vertical()
         .animated(true)
         .wheel_scroll_multiplier(Vec2::new(2.0, 2.0))
         .show_rows(ui, row_height, total_rows, |ui, row_range| {
@@ -59,4 +58,11 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
             }
             ui.add_space(spacing);
         });
+
+    let scroll_offset = output.state.offset.y;
+    let max_scroll = output.content_size.y - output.inner_rect.height();
+
+    if scroll_offset > max_scroll - 800.0 {
+        app.load_next_page();
+    }
 }

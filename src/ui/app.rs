@@ -1,5 +1,6 @@
-use crate::core::models::{DbCommand, MediaItem};
-use crate::data::db_worker::start_db_worker;
+use crate::core::models::MediaItem;
+use crate::data::db_service::DbService;
+use crate::data::db_worker::init_db;
 use crate::infra::cache;
 use crate::infra::config::AppConfig;
 use crate::ui::colors::C_PRIMARY_BG;
@@ -9,7 +10,7 @@ use crate::ui::fonts::setup_fonts;
 use crate::ui::scan_manager::ScanManager;
 use crate::ui::styles::apply_style;
 use crate::ui::texture_manager::TextureManager;
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::Receiver;
 use eframe::Frame;
 use egui::{Margin, TextureHandle, Ui};
 use egui_extras::image::load_image_bytes;
@@ -19,7 +20,6 @@ use std::time::{Duration, Instant};
 
 pub struct MediaApp {
     // core
-    db_tx: Sender<DbCommand>,
     pub config: AppConfig,
     pub texture_manager: TextureManager,
 
@@ -32,11 +32,14 @@ pub struct MediaApp {
     pub scan_manager: ScanManager,
     pub displayed_items: Vec<Arc<MediaItem>>,
 
-    pending_query: Option<Receiver<(u64, Vec<Arc<MediaItem>>)>>,
+    pending_queries: Vec<Receiver<(u64, Vec<Arc<MediaItem>>)>>,
     current_query_id: u64,
-    next_query_id: u64,
     pub last_input_time: Instant,
     debounce_delay: Duration,
+    page: usize,
+    has_more: bool,
+    is_loading_more: bool,
+    last_search_input: String,
 
     pub app_icon: Option<TextureHandle>,
 }
@@ -75,24 +78,25 @@ impl MediaApp {
             }
         };
 
-        let db_tx = start_db_worker();
-        let db_tx_for_scan = db_tx.clone();
+        init_db();
 
         let mut app = Self {
-            db_tx,
             config,
             texture_manager: TextureManager::new(&cc.egui_ctx),
             search_input: String::new(),
             root_path,
             displayed_items: Vec::new(),
             settings_open: None,
-            scan_manager: ScanManager::new(db_tx_for_scan),
+            scan_manager: ScanManager::new(),
             app_icon,
-            pending_query: None,
+            pending_queries: Vec::new(),
             current_query_id: 0,
-            next_query_id: 1,
             last_input_time: Instant::now(),
             debounce_delay: Duration::from_millis(300),
+            page: 0,
+            has_more: true,
+            is_loading_more: false,
+            last_search_input: String::new(),
         };
 
         app.refresh_items();
@@ -110,43 +114,37 @@ impl MediaApp {
     }
 
     fn send_query(&mut self) {
-        const PAGE_SIZE: usize = 500;
-
-        let (resp_tx, resp_rx) = crossbeam_channel::bounded(1);
-
-        let query_id = self.next_query_id;
-        self.next_query_id += 1;
-
-        self.current_query_id = query_id;
-
-        if self.search_input.trim().is_empty() {
-            self.db_tx
-                .send(DbCommand::Query {
-                    id: query_id,
-                    limit: PAGE_SIZE,
-                    offset: 0,
-                    resp: resp_tx,
-                })
-                .ok();
-        } else {
-            self.db_tx
-                .send(DbCommand::Search {
-                    id: query_id,
-                    query: self.search_input.clone(),
-                    limit: PAGE_SIZE,
-                    offset: 0,
-                    resp: resp_tx,
-                })
-                .ok();
+        if self.is_loading_more {
+            return;
         }
 
-        self.pending_query = Some(resp_rx);
+        const PAGE_SIZE: usize = 500;
+
+        let (id, rx) = if self.search_input.trim().is_empty() {
+            DbService::query(PAGE_SIZE, 0)
+        } else {
+            DbService::search(self.search_input.clone(), PAGE_SIZE, 0)
+        };
+
+        self.page = 0;
+        self.has_more = true;
+        self.current_query_id = id;
+        self.displayed_items.clear();
+        self.pending_queries.clear();
+        self.pending_queries.push(rx);
+        self.is_loading_more = true;
     }
 
     fn handle_search_input(&mut self) {
         let now = Instant::now();
 
+        if self.search_input.trim() == self.last_search_input.trim() {
+            return;
+        }
+
+        // debounce
         if now.duration_since(self.last_input_time) >= self.debounce_delay {
+            self.last_search_input = self.search_input.clone();
             self.send_query();
         }
     }
@@ -157,28 +155,70 @@ impl MediaApp {
         self.send_query();
     }
 
+    pub fn load_next_page(&mut self) {
+        if !self.has_more || self.is_loading_more {
+            return;
+        }
+
+        const PAGE_SIZE: usize = 100;
+
+        self.is_loading_more = true;
+
+        let offset = self.page * PAGE_SIZE;
+
+        let (_id, rx) = if self.search_input.trim().is_empty() {
+            DbService::query(PAGE_SIZE, offset)
+        } else {
+            DbService::search(self.search_input.clone(), PAGE_SIZE, offset)
+        };
+
+        self.pending_queries.push(rx);
+    }
+
     fn poll_db(&mut self, ctx: &egui::Context) {
         let mut need_repaint = false;
 
-        if let Some(rx) = &self.pending_query {
-            match rx.try_recv() {
+        let mut i = 0;
+
+        while i < self.pending_queries.len() {
+            let mut remove = false;
+
+            match self.pending_queries[i].try_recv() {
                 Ok((id, items)) => {
-                    if id == self.current_query_id {
-                        self.displayed_items = items;
+                    if id >= self.current_query_id {
+                        if self.displayed_items.is_empty() {
+                            self.displayed_items = items.clone();
+                        } else {
+                            self.displayed_items.extend(items.clone());
+                        }
+
+                        if items.len() < 100 {
+                            self.has_more = false;
+                        } else {
+                            self.page += 1;
+                        }
+
+                        need_repaint = true;
                     }
 
-                    self.pending_query = None;
+                    self.is_loading_more = false;
+
+                    remove = true;
                 }
+
                 Err(crossbeam_channel::TryRecvError::Empty) => {
-                    // waiting
+                    // wait
                 }
+
                 Err(_) => {
-                    self.pending_query = None;
+                    remove = true;
                 }
             }
 
-            if self.pending_query.is_some() {
-                need_repaint = true;
+            if remove {
+                self.pending_queries.remove(i);
+            } else {
+                i += 1;
             }
         }
 

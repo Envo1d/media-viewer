@@ -1,6 +1,7 @@
-use crate::core::models::{DbCommand, MediaItem, ScanEvent};
+use crate::core::models::{MediaItem, ScanEvent};
 use crate::core::scanner::MediaScanner;
-use crossbeam_channel::{Receiver, Sender};
+use crate::data::db_worker::get_db;
+use crossbeam_channel::Receiver;
 use std::collections::HashSet;
 
 pub struct ScanManager {
@@ -8,17 +9,15 @@ pub struct ScanManager {
     pub rx: Option<Receiver<ScanEvent>>,
     pub seen_paths: HashSet<String>,
     pending_items: Vec<MediaItem>,
-    db_tx: Sender<DbCommand>,
 }
 
 impl ScanManager {
-    pub fn new(db_tx: Sender<DbCommand>) -> Self {
+    pub fn new() -> Self {
         Self {
             is_scanning: false,
             rx: None,
             seen_paths: HashSet::new(),
             pending_items: Vec::with_capacity(500),
-            db_tx,
         }
     }
 
@@ -29,7 +28,7 @@ impl ScanManager {
         self.seen_paths.clear();
         self.pending_items.clear();
 
-        MediaScanner::start(root_path, tx, self.db_tx.clone());
+        MediaScanner::start(root_path, tx, get_db().clone());
     }
 
     pub fn update(&mut self) -> bool {

@@ -1,9 +1,11 @@
 use crate::core::models::DbCommand;
 use crate::data::db::Database;
 use crossbeam_channel::Sender;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-pub fn start_db_worker() -> Sender<DbCommand> {
+static DB: OnceLock<Sender<DbCommand>> = OnceLock::new();
+
+fn start_db_worker() -> Sender<DbCommand> {
     let (tx, rx) = crossbeam_channel::bounded::<DbCommand>(100);
 
     std::thread::spawn(move || {
@@ -48,4 +50,14 @@ pub fn start_db_worker() -> Sender<DbCommand> {
     });
 
     tx
+}
+
+pub fn init_db() -> Sender<DbCommand> {
+    let tx = start_db_worker();
+    DB.set(tx.clone()).expect("DB already initialized");
+    tx
+}
+
+pub fn get_db() -> &'static Sender<DbCommand> {
+    DB.get().expect("DB not initialized")
 }

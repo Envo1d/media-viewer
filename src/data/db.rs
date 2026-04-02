@@ -29,7 +29,7 @@ impl Database {
         let tx = self.conn.transaction().unwrap();
 
         {
-            let mut stmt = tx.prepare(
+            let mut stmt = tx.prepare_cached(
                 "INSERT INTO media (path, name, category, author, media_type, modified, last_seen_scan)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(path) DO UPDATE SET
@@ -63,7 +63,7 @@ impl Database {
     pub fn query(&self, limit: usize, offset: usize) -> Vec<MediaItem> {
         let mut stmt = self
             .conn
-            .prepare(
+            .prepare_cached(
                 "SELECT path, name, category, author, media_type, modified
          FROM media
          ORDER BY name
@@ -86,7 +86,7 @@ impl Database {
 
         let mut stmt = self
             .conn
-            .prepare(
+            .prepare_cached(
                 "SELECT m.path, m.name, m.category, m.author, m.media_type, m.modified
              FROM media m
              JOIN media_fts ON m.rowid = media_fts.rowid

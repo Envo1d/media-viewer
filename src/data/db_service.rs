@@ -3,14 +3,12 @@ use crossbeam_channel::{bounded, Receiver};
 use crate::core::models::{DbCommand, MediaItem};
 use crate::data::db_worker::get_db;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-static mut QUERY_ID: u64 = 0;
+static QUERY_ID: AtomicU64 = AtomicU64::new(0);
 
 fn next_id() -> u64 {
-    unsafe {
-        QUERY_ID += 1;
-        QUERY_ID
-    }
+    QUERY_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 pub struct DbService;

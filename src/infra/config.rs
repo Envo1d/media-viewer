@@ -2,6 +2,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppConfig {
@@ -23,9 +24,12 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    fn get_proj_dirs() -> ProjectDirs {
-        ProjectDirs::from("com", "envoid", "Nexa")
-            .expect("Unable to locate application system folders")
+    fn get_proj_dirs() -> &'static ProjectDirs {
+        static DIRS: OnceLock<ProjectDirs> = OnceLock::new();
+        DIRS.get_or_init(|| {
+            ProjectDirs::from("com", "envoid", "Nexa")
+                .expect("Unable to locate application system folders")
+        })
     }
 
     pub fn get_config_path() -> PathBuf {

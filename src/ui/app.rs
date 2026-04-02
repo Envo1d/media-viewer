@@ -118,7 +118,7 @@ impl MediaApp {
             return;
         }
 
-        const PAGE_SIZE: usize = 500;
+        const PAGE_SIZE: usize = 100;
 
         let (id, rx) = if self.search_input.trim().is_empty() {
             DbService::query(PAGE_SIZE, 0)
@@ -150,8 +150,6 @@ impl MediaApp {
     }
 
     pub fn refresh_items(&mut self) {
-        self.last_input_time = Instant::now();
-
         self.send_query();
     }
 
@@ -234,8 +232,6 @@ impl eframe::App for MediaApp {
 
         self.poll_db(&ctx);
         self.handle_search_input();
-
-        self.texture_manager.begin_frame();
 
         self.texture_manager.update(&ctx);
         self.handle_scan_events(&ctx);

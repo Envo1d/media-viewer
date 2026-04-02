@@ -119,6 +119,12 @@ pub fn run_migrations(tx: &Transaction) {
         )
         .unwrap();
 
+        tx.execute(
+            "INSERT INTO media_fts(rowid, path, name, category, author)
+                SELECT rowid, path, name, category, author FROM media",
+            [],
+        ).unwrap();
+
         version = 4;
         set_version(tx, version);
     }

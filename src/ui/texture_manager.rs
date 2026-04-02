@@ -6,14 +6,14 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use egui::{ColorImage, Context, TextureHandle};
 use image::{Rgba, RgbaImage};
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::sync::{
-    atomic::{AtomicBool, Ordering}, Arc,
-    Mutex,
+    atomic::{AtomicBool, Ordering},
+    Arc,
 };
 use std::thread::{spawn, JoinHandle};
-use std::time::Instant;
 
 use lru::LruCache;
 
@@ -21,18 +21,12 @@ const THUMB_SIZE: u32 = 120;
 const MAX_TEXTURES: usize = 400;
 
 pub struct TextureManager {
-    // cache
-    cache: Mutex<LruCache<String, TextureHandle>>,
+    cache: RefCell<LruCache<String, TextureHandle>>,
+    failed: RefCell<HashSet<String>>,
+    loading: RefCell<HashSet<String>>,
 
-    // state
-    loading: Mutex<HashSet<String>>,
-    failed: Mutex<HashSet<String>>,
-
-    // visible set (from UI each frame)
-    visible_set: Mutex<HashSet<String>>,
-
-    // task queue
-    task_tx: Option<Sender<TextureTask>>,
+    visible_tx: Option<Sender<TextureTask>>,
+    prefetch_tx: Option<Sender<TextureTask>>,
     result_rx: Receiver<(String, Option<RgbaImage>)>,
 
     workers: Vec<JoinHandle<()>>,
@@ -43,7 +37,8 @@ pub struct TextureManager {
 
 impl TextureManager {
     pub fn new(ctx: &Context) -> Self {
-        let (task_tx, task_rx) = bounded::<TextureTask>(1024);
+        let (visible_tx, visible_rx) = bounded::<TextureTask>(512);
+        let (prefetch_tx, prefetch_rx) = bounded::<TextureTask>(512);
         let (result_tx, result_rx) = bounded::<(String, Option<RgbaImage>)>(1024);
 
         let cache_dir = AppConfig::get_cache_dir();
@@ -54,10 +49,11 @@ impl TextureManager {
         let worker_count = std::cmp::min(6, num_cpus::get());
 
         for _ in 0..worker_count {
-            let task_rx = task_rx.clone();
+            let visible_rx = visible_rx.clone();
+            let prefetch_rx = prefetch_rx.clone();
             let result_tx = result_tx.clone();
-            let cache_dir = cache_dir.clone();
             let shutdown = shutdown.clone();
+            let cache_dir = cache_dir.clone();
 
             let handle = spawn(move || {
                 #[cfg(windows)]
@@ -71,9 +67,12 @@ impl TextureManager {
                         break;
                     }
 
-                    let task = match task_rx.recv() {
+                    let task = match visible_rx.try_recv() {
                         Ok(t) => t,
-                        Err(_) => break,
+                        Err(_) => match prefetch_rx.recv() {
+                            Ok(t) => t,
+                            Err(_) => break,
+                        },
                     };
 
                     let img = load_or_generate(&cache_dir, &task.path, THUMB_SIZE);
@@ -107,20 +106,16 @@ impl TextureManager {
         };
 
         Self {
-            cache: Mutex::new(LruCache::new(NonZeroUsize::new(MAX_TEXTURES).unwrap())),
-            loading: Mutex::new(HashSet::new()),
-            failed: Mutex::new(HashSet::new()),
-            visible_set: Mutex::new(HashSet::new()),
-            task_tx: Some(task_tx),
+            cache: RefCell::new(LruCache::new(NonZeroUsize::new(MAX_TEXTURES).unwrap())),
+            failed: RefCell::new(HashSet::new()),
+            loading: RefCell::new(HashSet::new()),
+            visible_tx: Some(visible_tx),
+            prefetch_tx: Some(prefetch_tx),
             result_rx,
             workers,
             shutdown,
             placeholder,
         }
-    }
-
-    pub fn begin_frame(&mut self) {
-        self.visible_set.lock().unwrap().clear();
     }
 
     pub fn update(&mut self, ctx: &Context) {
@@ -129,39 +124,37 @@ impl TextureManager {
 
     pub fn get(&self, path: &str) -> TextureHandle {
         // cache hit
-        if let Some(tex) = self.cache.lock().unwrap().get(path) {
+        if let Some(tex) = self.cache.borrow_mut().get(path) {
             return tex.clone();
         }
 
-        // mark visible
-        self.visible_set.lock().unwrap().insert(path.to_string());
-
-        if self.failed.lock().unwrap().contains(path) {
+        if self.failed.borrow().contains(path) {
             return self.placeholder.clone();
         }
 
-        let mut loading = self.loading.lock().unwrap();
+        let mut loading = self.loading.borrow_mut();
 
         if !loading.contains(path) {
             let task = TextureTask {
                 path: path.to_string(),
                 priority: 0,
-                timestamp: Instant::now(),
+                timestamp: std::time::Instant::now(),
             };
 
-            let _ = self.task_tx.as_ref().unwrap().send(task);
-            loading.insert(path.to_string());
+            if self.visible_tx.as_ref().unwrap().send(task).is_ok() {
+                loading.insert(path.to_string());
+            }
         }
 
         self.placeholder.clone()
     }
 
     pub fn prefetch(&self, path: &str) {
-        if self.cache.lock().unwrap().get(path).is_some() {
+        if self.cache.borrow().contains(path) {
             return;
         }
 
-        let mut loading = self.loading.lock().unwrap();
+        let mut loading = self.loading.borrow_mut();
 
         if loading.contains(path) {
             return;
@@ -170,10 +163,10 @@ impl TextureManager {
         let task = TextureTask {
             path: path.to_string(),
             priority: 10,
-            timestamp: Instant::now(),
+            timestamp: std::time::Instant::now(),
         };
 
-        if self.task_tx.as_ref().unwrap().send(task).is_ok() {
+        if self.prefetch_tx.as_ref().unwrap().send(task).is_ok() {
             loading.insert(path.to_string());
         }
     }
@@ -187,7 +180,10 @@ impl TextureManager {
                 break;
             }
 
-            self.loading.lock().unwrap().remove(&path);
+            {
+                let mut loading = self.loading.borrow_mut();
+                loading.remove(&path);
+            }
 
             if let Some(img) = img_opt {
                 let size = [img.width() as usize, img.height() as usize];
@@ -198,10 +194,10 @@ impl TextureManager {
                     Default::default(),
                 );
 
-                self.failed.lock().unwrap().remove(&path);
-                self.cache.lock().unwrap().put(path.clone(), texture);
+                self.failed.borrow_mut().remove(&path);
+                self.cache.borrow_mut().put(path.clone(), texture);
             } else {
-                self.failed.lock().unwrap().insert(path);
+                self.failed.borrow_mut().insert(path);
             }
 
             processed += 1;
@@ -217,7 +213,8 @@ impl Drop for TextureManager {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
 
-        drop(self.task_tx.take());
+        drop(self.visible_tx.take());
+        drop(self.prefetch_tx.take());
 
         for w in self.workers.drain(..) {
             let _ = w.join();

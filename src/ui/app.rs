@@ -270,8 +270,6 @@ impl eframe::App for MediaApp {
 
                 egui::CentralPanel::default().show_inside(ui, |ui| {
                     components::grid_layout(self, ui);
-
-                    self.texture_manager.end_frame();
                 });
             });
     }

@@ -18,7 +18,7 @@ pub fn media_card(
     let painter = ui.painter();
 
     // texture (thumbnail)
-    let texture = texture_manager.get(ui.ctx(), &item.path);
+    let texture = texture_manager.get(&item.path);
     let img_size =
         texture.size_vec2() * (size / texture.size_vec2().x.max(texture.size_vec2().y)).min(1.0);
     let img_pos = rect.center() - img_size / 2.0;

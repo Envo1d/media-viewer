@@ -42,7 +42,6 @@ impl TextureManager {
         let (result_tx, result_rx) = bounded::<(String, Option<RgbaImage>)>(1024);
 
         let cache_dir = AppConfig::get_cache_dir();
-
         let shutdown = Arc::new(AtomicBool::new(false));
         let mut workers = Vec::new();
 
@@ -76,7 +75,6 @@ impl TextureManager {
                     };
 
                     let img = load_or_generate(&cache_dir, &task.path, THUMB_SIZE);
-
                     let _ = result_tx.send((task.path, img));
                 }
 
@@ -90,11 +88,10 @@ impl TextureManager {
             workers.push(handle);
         }
 
-        // placeholder
+        // Gray placeholder shown while a thumbnail is loading
         let placeholder = {
             let img = RgbaImage::from_pixel(THUMB_SIZE, THUMB_SIZE, Rgba([80, 80, 80, 255]));
-            let pixels: Vec<_> = img.pixels().flat_map(|p| p.0).collect();
-
+            let pixels: Vec<u8> = img.pixels().flat_map(|p| p.0).collect();
             ctx.load_texture(
                 "placeholder",
                 ColorImage::from_rgba_unmultiplied(
@@ -123,7 +120,6 @@ impl TextureManager {
     }
 
     pub fn get(&self, path: &str) -> TextureHandle {
-        // cache hit
         if let Some(tex) = self.cache.borrow_mut().get(path) {
             return tex.clone();
         }
@@ -133,14 +129,12 @@ impl TextureManager {
         }
 
         let mut loading = self.loading.borrow_mut();
-
         if !loading.contains(path) {
             let task = TextureTask {
                 path: path.to_string(),
                 priority: 0,
                 timestamp: std::time::Instant::now(),
             };
-
             if self.visible_tx.as_ref().unwrap().send(task).is_ok() {
                 loading.insert(path.to_string());
             }
@@ -153,54 +147,50 @@ impl TextureManager {
         if self.cache.borrow().contains(path) {
             return;
         }
-
         let mut loading = self.loading.borrow_mut();
-
         if loading.contains(path) {
             return;
         }
-
         let task = TextureTask {
             path: path.to_string(),
             priority: 10,
             timestamp: std::time::Instant::now(),
         };
-
         if self.prefetch_tx.as_ref().unwrap().send(task).is_ok() {
             loading.insert(path.to_string());
         }
     }
 
     fn process_results(&mut self, ctx: &Context) {
-        let mut processed = 0;
         let max_per_frame = 32;
+        let mut processed = 0;
 
-        while let Ok((path, img_opt)) = self.result_rx.try_recv() {
+        loop {
             if processed >= max_per_frame {
                 break;
             }
 
-            {
-                let mut loading = self.loading.borrow_mut();
-                loading.remove(&path);
+            match self.result_rx.try_recv() {
+                Ok((path, img_opt)) => {
+                    self.loading.borrow_mut().remove(&path);
+
+                    if let Some(img) = img_opt {
+                        let size = [img.width() as usize, img.height() as usize];
+                        let texture = ctx.load_texture(
+                            &path,
+                            ColorImage::from_rgba_unmultiplied(size, img.as_raw()),
+                            Default::default(),
+                        );
+                        self.failed.borrow_mut().remove(&path);
+                        self.cache.borrow_mut().put(path, texture);
+                    } else {
+                        self.failed.borrow_mut().insert(path);
+                    }
+
+                    processed += 1;
+                }
+                Err(_) => break,
             }
-
-            if let Some(img) = img_opt {
-                let size = [img.width() as usize, img.height() as usize];
-
-                let texture = ctx.load_texture(
-                    &path,
-                    ColorImage::from_rgba_unmultiplied(size, img.as_raw()),
-                    Default::default(),
-                );
-
-                self.failed.borrow_mut().remove(&path);
-                self.cache.borrow_mut().put(path.clone(), texture);
-            } else {
-                self.failed.borrow_mut().insert(path);
-            }
-
-            processed += 1;
         }
 
         if processed > 0 {
@@ -215,7 +205,6 @@ impl Drop for TextureManager {
 
         drop(self.visible_tx.take());
         drop(self.prefetch_tx.take());
-
         for w in self.workers.drain(..) {
             let _ = w.join();
         }

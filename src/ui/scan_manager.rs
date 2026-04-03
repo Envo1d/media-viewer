@@ -5,21 +5,32 @@ use crossbeam_channel::Receiver;
 
 pub struct ScanManager {
     pub is_scanning: bool,
-    pub rx: Option<Receiver<ScanEvent>>,
+    pub files_scanned: u64,
+    rx: Option<Receiver<ScanEvent>>,
 }
 
 impl ScanManager {
     pub fn new() -> Self {
         Self {
             is_scanning: false,
+            files_scanned: 0,
             rx: None,
         }
     }
 
     pub fn start(&mut self, root_path: String) {
+        if self.is_scanning {
+            return;
+        }
+
+        if root_path.is_empty() {
+            return;
+        }
+
         let (tx, rx) = crossbeam_channel::unbounded();
         self.rx = Some(rx);
         self.is_scanning = true;
+        self.files_scanned = 0;
 
         MediaScanner::start(root_path, tx, get_db().clone());
     }
@@ -30,6 +41,9 @@ impl ScanManager {
         if let Some(rx) = &self.rx {
             for event in rx.try_iter() {
                 match event {
+                    ScanEvent::Progress(n) => {
+                        self.files_scanned += n;
+                    }
                     ScanEvent::Finished => {
                         finished = true;
                     }

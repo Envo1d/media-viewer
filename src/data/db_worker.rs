@@ -16,35 +16,38 @@ fn start_db_worker() -> Sender<DbCommand> {
                 DbCommand::UpsertBatch(items, scan_id) => {
                     db.upsert_batch(&items, scan_id);
                 }
-
                 DbCommand::DeleteNotSeen(scan_id) => {
                     db.delete_not_seen(scan_id);
                 }
-
                 DbCommand::Query {
                     id,
                     limit,
                     offset,
+                    filter,
+                    sort,
                     resp,
                 } => {
-                    let result = db.query(limit, offset);
-                    let processed_result = result.into_iter().map(Arc::new).collect();
-                    let _ = resp.send((id, processed_result));
+                    let items = db.query(limit, offset, &filter, &sort);
+                    let arced: Vec<Arc<_>> = items.into_iter().map(Arc::new).collect();
+                    let _ = resp.send((id, arced));
                 }
-
                 DbCommand::Search {
                     id,
                     query,
                     limit,
                     offset,
+                    filter,
+                    sort,
                     resp,
                 } => {
-                    let result = db.search(&query, limit, offset);
-                    let processed_result = result.into_iter().map(Arc::new).collect();
-                    let _ = resp.send((id, processed_result));
+                    let items = db.search(&query, limit, offset, &filter, &sort);
+                    let arced: Vec<Arc<_>> = items.into_iter().map(Arc::new).collect();
+                    let _ = resp.send((id, arced));
                 }
             })) {
                 eprintln!("DB worker panic: {:?}", e);
+                // The resp sender was dropped by the panic, so poll_db on the UI thread
+                // will see TryRecvError::Disconnected and correctly reset is_loading_more.
             }
         }
     });

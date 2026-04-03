@@ -1,4 +1,4 @@
-use crate::core::models::MediaItem;
+use crate::core::models::{MediaFilter, MediaItem, SortOrder};
 use crate::data::db_service::DbService;
 use crate::data::db_worker::init_db;
 use crate::infra::cache;
@@ -18,8 +18,10 @@ use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+const PAGE_SIZE: usize = 100;
+
 pub struct MediaApp {
-    // core
+    // Core
     pub config: AppConfig,
     pub texture_manager: TextureManager,
 
@@ -28,10 +30,16 @@ pub struct MediaApp {
     pub root_path: String,
     pub settings_open: Option<bool>,
 
-    // data
+    // View options
+    pub filter: MediaFilter,
+    pub sort: SortOrder,
+    pub card_size: f32,
+
+    // Data
     pub scan_manager: ScanManager,
     pub displayed_items: Vec<Arc<MediaItem>>,
 
+    // Query machinery
     pending_queries: Vec<Receiver<(u64, Vec<Arc<MediaItem>>)>>,
     current_query_id: u64,
     pub last_input_time: Instant,
@@ -56,17 +64,14 @@ impl MediaApp {
             .library_path
             .as_ref()
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "S:\\test".to_string());
+            .unwrap_or_default();
 
         let cache_dir = AppConfig::get_cache_dir();
-
         let _ = fs::create_dir_all(&cache_dir);
-
         cache::prune_cache(&cache_dir, 500);
 
         let app_icon = {
             let icon_bytes = include_bytes!("../../assets/icon.png");
-
             if let Ok(image) = load_image_bytes(icon_bytes) {
                 Some(
                     cc.egui_ctx
@@ -80,14 +85,19 @@ impl MediaApp {
 
         init_db();
 
+        let auto_scan = config.auto_scan && !root_path.is_empty();
+
         let mut app = Self {
             config,
             texture_manager: TextureManager::new(&cc.egui_ctx),
             search_input: String::new(),
-            root_path,
+            root_path: root_path.clone(),
             displayed_items: Vec::new(),
             settings_open: None,
             scan_manager: ScanManager::new(),
+            filter: MediaFilter::All,
+            sort: SortOrder::NameAsc,
+            card_size: 200.0,
             app_icon,
             pending_queries: Vec::new(),
             current_query_id: 0,
@@ -101,13 +111,15 @@ impl MediaApp {
 
         app.refresh_items();
 
+        if auto_scan {
+            app.scan_manager.start(root_path);
+        }
+
         app
     }
 
     fn handle_scan_events(&mut self, ctx: &egui::Context) {
-        let finished = self.scan_manager.update();
-
-        if finished {
+        if self.scan_manager.update() {
             self.refresh_items();
             ctx.request_repaint();
         }
@@ -118,12 +130,16 @@ impl MediaApp {
             return;
         }
 
-        const PAGE_SIZE: usize = 100;
-
         let (id, rx) = if self.search_input.trim().is_empty() {
-            DbService::query(PAGE_SIZE, 0)
+            DbService::query(PAGE_SIZE, 0, self.filter.clone(), self.sort.clone())
         } else {
-            DbService::search(self.search_input.clone(), PAGE_SIZE, 0)
+            DbService::search(
+                self.search_input.clone(),
+                PAGE_SIZE,
+                0,
+                self.filter.clone(),
+                self.sort.clone(),
+            )
         };
 
         self.page = 0;
@@ -136,20 +152,18 @@ impl MediaApp {
     }
 
     fn handle_search_input(&mut self) {
-        let now = Instant::now();
-
         if self.search_input.trim() == self.last_search_input.trim() {
             return;
         }
 
-        // debounce
-        if now.duration_since(self.last_input_time) >= self.debounce_delay {
+        if Instant::now().duration_since(self.last_input_time) >= self.debounce_delay {
             self.last_search_input = self.search_input.clone();
             self.send_query();
         }
     }
 
     pub fn refresh_items(&mut self) {
+        self.is_loading_more = false;
         self.send_query();
     }
 
@@ -158,16 +172,20 @@ impl MediaApp {
             return;
         }
 
-        const PAGE_SIZE: usize = 100;
-
         self.is_loading_more = true;
 
         let offset = self.page * PAGE_SIZE;
 
         let (_id, rx) = if self.search_input.trim().is_empty() {
-            DbService::query(PAGE_SIZE, offset)
+            DbService::query(PAGE_SIZE, offset, self.filter.clone(), self.sort.clone())
         } else {
-            DbService::search(self.search_input.clone(), PAGE_SIZE, offset)
+            DbService::search(
+                self.search_input.clone(),
+                PAGE_SIZE,
+                offset,
+                self.filter.clone(),
+                self.sort.clone(),
+            )
         };
 
         self.pending_queries.push(rx);
@@ -175,7 +193,6 @@ impl MediaApp {
 
     fn poll_db(&mut self, ctx: &egui::Context) {
         let mut need_repaint = false;
-
         let mut i = 0;
 
         while i < self.pending_queries.len() {
@@ -184,31 +201,25 @@ impl MediaApp {
             match self.pending_queries[i].try_recv() {
                 Ok((id, items)) => {
                     if id >= self.current_query_id {
-                        if self.displayed_items.is_empty() {
-                            self.displayed_items = items.clone();
-                        } else {
-                            self.displayed_items.extend(items.clone());
-                        }
-
-                        if items.len() < 100 {
+                        if items.len() < PAGE_SIZE {
                             self.has_more = false;
                         } else {
                             self.page += 1;
                         }
-
+                        self.displayed_items.extend(items);
                         need_repaint = true;
                     }
-
                     self.is_loading_more = false;
-
                     remove = true;
                 }
 
                 Err(crossbeam_channel::TryRecvError::Empty) => {
-                    // wait
+                    // Result not ready yet — keep polling next frame.
                 }
 
-                Err(_) => {
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    eprintln!("poll_db: channel disconnected, unlocking query state");
+                    self.is_loading_more = false;
                     remove = true;
                 }
             }
@@ -232,7 +243,6 @@ impl eframe::App for MediaApp {
 
         self.poll_db(&ctx);
         self.handle_search_input();
-
         self.texture_manager.update(&ctx);
         self.handle_scan_events(&ctx);
 

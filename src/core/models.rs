@@ -3,6 +3,23 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
+#[derive(Clone, PartialEq, Default)]
+pub enum MediaFilter {
+    #[default]
+    All,
+    Images,
+    Videos,
+}
+
+#[derive(Clone, PartialEq, Default)]
+pub enum SortOrder {
+    #[default]
+    NameAsc,
+    NameDesc,
+    DateDesc,
+    DateAsc,
+}
+
 pub enum DbCommand {
     UpsertBatch(Vec<Arc<MediaItem>>, i64),
     DeleteNotSeen(i64),
@@ -10,6 +27,8 @@ pub enum DbCommand {
         id: u64,
         limit: usize,
         offset: usize,
+        filter: MediaFilter,
+        sort: SortOrder,
         resp: Sender<(u64, Vec<Arc<MediaItem>>)>,
     },
     Search {
@@ -17,6 +36,8 @@ pub enum DbCommand {
         query: String,
         limit: usize,
         offset: usize,
+        filter: MediaFilter,
+        sort: SortOrder,
         resp: Sender<(u64, Vec<Arc<MediaItem>>)>,
     },
 }
@@ -31,14 +52,24 @@ pub struct MediaItem {
     pub modified: i64,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MediaType {
     Image,
     Video,
 }
 
+impl MediaType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MediaType::Image => "Image",
+            MediaType::Video => "Video",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum ScanEvent {
+    Progress(u64),
     Finished,
 }
 
@@ -50,11 +81,10 @@ pub struct TextureTask {
 
 impl Ord for TextureTask {
     fn cmp(&self, other: &Self) -> Ordering {
-        let p_res = other.priority.cmp(&self.priority);
-        if p_res != Ordering::Equal {
-            return p_res;
+        let p = other.priority.cmp(&self.priority);
+        if p != Ordering::Equal {
+            return p;
         }
-
         self.timestamp.cmp(&other.timestamp)
     }
 }

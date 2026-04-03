@@ -10,6 +10,8 @@ pub struct AppConfig {
     pub database_path: PathBuf,
     pub last_scan_date: Option<String>,
     pub cache_path: PathBuf,
+    #[serde(default)]
+    pub auto_scan: bool,
 }
 
 impl Default for AppConfig {
@@ -19,6 +21,7 @@ impl Default for AppConfig {
             database_path: Self::get_db_path(),
             cache_path: Self::get_cache_dir(),
             last_scan_date: None,
+            auto_scan: false,
         }
     }
 }

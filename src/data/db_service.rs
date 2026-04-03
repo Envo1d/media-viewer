@@ -1,9 +1,9 @@
 use crossbeam_channel::{bounded, Receiver};
 
-use crate::core::models::{DbCommand, MediaItem};
+use crate::core::models::{DbCommand, MediaFilter, MediaItem, SortOrder};
 use crate::data::db_worker::get_db;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 static QUERY_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -14,9 +14,13 @@ fn next_id() -> u64 {
 pub struct DbService;
 
 impl DbService {
-    pub fn query(limit: usize, offset: usize) -> (u64, Receiver<(u64, Vec<Arc<MediaItem>>)>) {
+    pub fn query(
+        limit: usize,
+        offset: usize,
+        filter: MediaFilter,
+        sort: SortOrder,
+    ) -> (u64, Receiver<(u64, Vec<Arc<MediaItem>>)>) {
         let (tx, rx) = bounded(1);
-
         let id = next_id();
 
         get_db()
@@ -24,6 +28,8 @@ impl DbService {
                 id,
                 limit,
                 offset,
+                filter,
+                sort,
                 resp: tx,
             })
             .ok();
@@ -35,9 +41,10 @@ impl DbService {
         query: String,
         limit: usize,
         offset: usize,
+        filter: MediaFilter,
+        sort: SortOrder,
     ) -> (u64, Receiver<(u64, Vec<Arc<MediaItem>>)>) {
         let (tx, rx) = bounded(1);
-
         let id = next_id();
 
         get_db()
@@ -46,6 +53,8 @@ impl DbService {
                 query,
                 limit,
                 offset,
+                filter,
+                sort,
                 resp: tx,
             })
             .ok();

@@ -1,4 +1,4 @@
-use crate::core::models::MediaItem;
+use crate::core::models::{MediaFilter, MediaItem, SortOrder};
 use crate::data::migrations::{init_schema_version, run_migrations};
 use crate::infra::config::AppConfig;
 use crate::utils::{build_search_query, map_media_item};
@@ -9,101 +9,180 @@ pub struct Database {
     conn: Connection,
 }
 
+fn filter_clause(filter: &MediaFilter) -> &'static str {
+    match filter {
+        MediaFilter::All => "",
+        MediaFilter::Images => "AND media_type = 'Image'",
+        MediaFilter::Videos => "AND media_type = 'Video'",
+    }
+}
+
+fn filter_clause_fts(filter: &MediaFilter) -> &'static str {
+    match filter {
+        MediaFilter::All => "",
+        MediaFilter::Images => "AND m.media_type = 'Image'",
+        MediaFilter::Videos => "AND m.media_type = 'Video'",
+    }
+}
+
+fn order_clause(sort: &SortOrder) -> &'static str {
+    match sort {
+        SortOrder::NameAsc => "ORDER BY name ASC",
+        SortOrder::NameDesc => "ORDER BY name DESC",
+        SortOrder::DateDesc => "ORDER BY modified DESC",
+        SortOrder::DateAsc => "ORDER BY modified ASC",
+    }
+}
+
+fn fts_order_clause(sort: &SortOrder) -> &'static str {
+    match sort {
+        SortOrder::NameAsc => "ORDER BY m.name ASC",
+        SortOrder::NameDesc => "ORDER BY m.name DESC",
+        SortOrder::DateDesc => "ORDER BY m.modified DESC",
+        SortOrder::DateAsc => "ORDER BY m.modified ASC",
+    }
+}
+
 impl Database {
     pub fn new() -> Self {
         let path = AppConfig::get_db_path();
+        let mut conn = Connection::open(path).expect("Cannot open SQLite database");
 
-        let mut conn = Connection::open(path).unwrap();
-
-        let tx = conn.transaction().unwrap();
-
+        let tx = conn
+            .transaction()
+            .expect("Cannot begin migration transaction");
         init_schema_version(&tx);
         run_migrations(&tx);
-
-        tx.commit().unwrap();
+        tx.commit().expect("Cannot commit migrations");
 
         Self { conn }
     }
 
     pub fn upsert_batch(&mut self, items: &[Arc<MediaItem>], scan_id: i64) {
-        let tx = self.conn.transaction().unwrap();
+        let tx = match self.conn.transaction() {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("upsert_batch tx error: {e}");
+                return;
+            }
+        };
 
         {
-            let mut stmt = tx.prepare_cached(
+            let mut stmt = match tx.prepare_cached(
                 "INSERT INTO media (path, name, category, author, media_type, modified, last_seen_scan)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(path) DO UPDATE SET
-                name=excluded.name,
-                category=excluded.category,
-                author=excluded.author,
-                media_type=excluded.media_type,
-                modified=excluded.modified,
-                last_seen_scan=?7"
-            ).unwrap();
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(path) DO UPDATE SET
+                    name          = excluded.name,
+                    category      = excluded.category,
+                    author        = excluded.author,
+                    media_type    = excluded.media_type,
+                    modified      = excluded.modified,
+                    last_seen_scan = ?7",
+            ) {
+                Ok(s) => s,
+                Err(e) => { eprintln!("upsert prepare error: {e}"); return; }
+            };
 
             for item in items {
                 let item = item.as_ref();
-
                 stmt.execute(rusqlite::params![
                     item.path,
                     item.name,
                     item.category,
                     item.author,
-                    format!("{:?}", item.media_type),
+                    item.media_type.as_str(),
                     item.modified,
-                    scan_id
+                    scan_id,
                 ])
                 .ok();
             }
         }
 
-        tx.commit().unwrap();
+        if let Err(e) = tx.commit() {
+            eprintln!("upsert_batch commit error: {e}");
+        }
     }
 
-    pub fn query(&self, limit: usize, offset: usize) -> Vec<MediaItem> {
-        let mut stmt = self
-            .conn
-            .prepare_cached(
-                "SELECT path, name, category, author, media_type, modified
-         FROM media
-         ORDER BY name
-         LIMIT ?1 OFFSET ?2",
-            )
-            .unwrap();
+    pub fn query(
+        &self,
+        limit: usize,
+        offset: usize,
+        filter: &MediaFilter,
+        sort: &SortOrder,
+    ) -> Vec<MediaItem> {
+        let sql = format!(
+            "SELECT path, name, category, author, media_type, modified
+               FROM media
+              WHERE 1=1 {}
+              {}
+              LIMIT ?1 OFFSET ?2",
+            filter_clause(filter),
+            order_clause(sort),
+        );
 
-        let rows = stmt
-            .query_map(
-                rusqlite::params![limit as i64, offset as i64],
-                map_media_item,
-            )
-            .unwrap();
+        let mut stmt = match self.conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("query prepare error: {e}");
+                return Vec::new();
+            }
+        };
 
-        rows.filter_map(Result::ok).collect()
+        match stmt.query_map(
+            rusqlite::params![limit as i64, offset as i64],
+            map_media_item,
+        ) {
+            Ok(rows) => rows.filter_map(Result::ok).collect(),
+            Err(e) => {
+                eprintln!("query error: {e}");
+                Vec::new()
+            }
+        }
     }
 
-    pub fn search(&self, input: &str, limit: usize, offset: usize) -> Vec<MediaItem> {
-        let query = build_search_query(input);
+    pub fn search(
+        &self,
+        input: &str,
+        limit: usize,
+        offset: usize,
+        filter: &MediaFilter,
+        sort: &SortOrder,
+    ) -> Vec<MediaItem> {
+        let fts_query = build_search_query(input);
 
-        let mut stmt = self
-            .conn
-            .prepare_cached(
-                "SELECT m.path, m.name, m.category, m.author, m.media_type, m.modified
-             FROM media m
-             JOIN media_fts ON m.rowid = media_fts.rowid
-             WHERE media_fts MATCH ?1
-             ORDER BY rank
-             LIMIT ?2 OFFSET ?3",
-            )
-            .unwrap();
+        if fts_query.is_empty() {
+            return self.query(limit, offset, filter, sort);
+        }
 
-        let rows = stmt
-            .query_map(
-                rusqlite::params![query, limit as i64, offset as i64],
-                map_media_item,
-            )
-            .unwrap();
+        let sql = format!(
+            "SELECT m.path, m.name, m.category, m.author, m.media_type, m.modified
+               FROM media m
+               JOIN media_fts ON m.rowid = media_fts.rowid
+              WHERE media_fts MATCH ?1 {}
+              {}
+              LIMIT ?2 OFFSET ?3",
+            filter_clause_fts(filter),
+            fts_order_clause(sort),
+        );
 
-        rows.filter_map(Result::ok).collect()
+        let mut stmt = match self.conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("search prepare error: {e}");
+                return Vec::new();
+            }
+        };
+
+        match stmt.query_map(
+            rusqlite::params![fts_query, limit as i64, offset as i64],
+            map_media_item,
+        ) {
+            Ok(rows) => rows.filter_map(Result::ok).collect(),
+            Err(e) => {
+                eprintln!("search error: {e}");
+                Vec::new()
+            }
+        }
     }
 
     pub fn delete_not_seen(&self, scan_id: i64) {

@@ -11,7 +11,6 @@ const BATCH_SIZE: usize = 500;
 pub struct MediaScanner;
 
 impl MediaScanner {
-    // === FILE PROCESSING ===
     fn process_entry(root_path: &str, entry: &ignore::DirEntry) -> Option<Arc<MediaItem>> {
         let path = entry.path();
 
@@ -22,13 +21,12 @@ impl MediaScanner {
         let ext = path.extension()?.to_str()?.to_lowercase();
 
         let media_type = match ext.as_str() {
-            "mp4" | "mkv" | "avi" => MediaType::Video,
-            "jpg" | "png" | "jpeg" | "gif" => MediaType::Image,
+            "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" => MediaType::Video,
+            "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" => MediaType::Image,
             _ => return None,
         };
 
         let metadata = fs::metadata(path).ok()?;
-
         let modified = metadata
             .modified()
             .ok()?
@@ -37,7 +35,6 @@ impl MediaScanner {
             .as_secs() as i64;
 
         let rel = path.strip_prefix(root_path).ok()?;
-
         let parts: Vec<_> = rel
             .components()
             .map(|c| c.as_os_str().to_string_lossy())
@@ -59,28 +56,35 @@ impl MediaScanner {
 
     fn run(root_path: String, ui_tx: Sender<ScanEvent>, db_tx: Sender<DbCommand>) {
         let scan_id = current_timestamp();
-        let (tx, rx) = unbounded::<Arc<MediaItem>>();
+        let (item_tx, item_rx) = unbounded::<Arc<MediaItem>>();
 
-        // === AGGREGATOR THREAD ===
         let db_tx_clone = db_tx.clone();
+        let ui_tx_clone = ui_tx.clone();
+
         let aggregator = thread::spawn(move || {
             let mut batch = Vec::with_capacity(BATCH_SIZE);
 
-            for item in rx {
+            for item in item_rx {
                 batch.push(item);
 
                 if batch.len() >= BATCH_SIZE {
                     let to_send = std::mem::take(&mut batch);
+                    let count = to_send.len() as u64;
+
                     db_tx_clone
                         .send(DbCommand::UpsertBatch(to_send, scan_id))
                         .ok();
+
+                    ui_tx_clone.send(ScanEvent::Progress(count)).ok();
                 }
             }
 
             if !batch.is_empty() {
+                let count = batch.len() as u64;
                 db_tx_clone
                     .send(DbCommand::UpsertBatch(batch, scan_id))
                     .ok();
+                ui_tx_clone.send(ScanEvent::Progress(count)).ok();
             }
 
             db_tx_clone.send(DbCommand::DeleteNotSeen(scan_id)).ok();
@@ -95,7 +99,7 @@ impl MediaScanner {
             .build_parallel();
 
         walker.run(|| {
-            let tx = tx.clone();
+            let tx = item_tx.clone();
             let root = root.clone();
 
             Box::new(move |result| {
@@ -104,12 +108,11 @@ impl MediaScanner {
                         tx.send(item).ok();
                     }
                 }
-
                 ignore::WalkState::Continue
             })
         });
 
-        drop(tx);
+        drop(item_tx);
 
         aggregator.join().ok();
 

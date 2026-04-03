@@ -5,12 +5,14 @@ use egui::Ui;
 
 pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
     // params
-    let item_size = 200.0;
+    let item_size = app.card_size;
     let spacing = 10.0;
-    let available_width = ui.available_width() * 0.9;
+
+    let available_width = ui.available_width() * 0.95;
     let columns = ((available_width + spacing) / (item_size + spacing))
         .floor()
         .max(1.0) as usize;
+
     let total_width = columns as f32 * item_size + (columns - 1) as f32 * spacing;
     let side_padding = ((ui.available_width() - total_width) / 2.0).max(0.0);
     let row_height = item_size + spacing;
@@ -19,7 +21,7 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
     let items = &app.displayed_items;
 
     let output = egui::ScrollArea::vertical()
-        .animated(true)
+        .animated(false)
         .wheel_scroll_multiplier(Vec2::new(2.0, 2.0))
         .show_rows(ui, row_height, total_rows, |ui, row_range| {
             let margin = 1;
@@ -28,8 +30,8 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
 
             for p_row in prefetch_rows {
                 for col in 0..columns {
-                    let index = p_row * columns + col;
-                    if let Some(item) = items.get(index) {
+                    let idx = p_row * columns + col;
+                    if let Some(item) = items.get(idx) {
                         app.texture_manager.prefetch(&item.path);
                     }
                 }
@@ -40,12 +42,12 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
                     ui.add_space(side_padding);
 
                     for col in 0..columns {
-                        let index = row * columns + col;
-                        if index >= items.len() {
+                        let idx = row * columns + col;
+                        if idx >= items.len() {
                             break;
                         }
 
-                        if let Some(item) = items.get(index) {
+                        if let Some(item) = items.get(idx) {
                             media_card(ui, item, &mut app.texture_manager, item_size);
                         }
 
@@ -53,9 +55,11 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
                             ui.add_space(spacing);
                         }
                     }
+
                     ui.add_space(side_padding);
                 });
             }
+
             ui.add_space(spacing);
         });
 

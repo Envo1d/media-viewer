@@ -85,10 +85,8 @@ impl MediaApp {
 
         init_db();
 
-        let auto_scan = config.auto_scan && !root_path.is_empty();
-
         let mut app = Self {
-            config,
+            config: config.clone(),
             texture_manager: TextureManager::new(&cc.egui_ctx),
             search_input: String::new(),
             root_path: root_path.clone(),
@@ -111,15 +109,21 @@ impl MediaApp {
 
         app.refresh_items();
 
-        if auto_scan {
-            app.scan_manager.start(root_path);
+        if !root_path.is_empty() {
+            if config.auto_scan {
+                app.scan_manager.start(root_path);
+            } else {
+                app.scan_manager.start_watching(root_path);
+            }
         }
 
         app
     }
 
-    fn handle_scan_events(&mut self, ctx: &egui::Context) {
-        if self.scan_manager.update() {
+    fn handle_scan_and_watch_events(&mut self, ctx: &egui::Context) {
+        let (scan_finished, watch_changed) = self.scan_manager.update();
+
+        if scan_finished || watch_changed {
             self.refresh_items();
             ctx.request_repaint();
         }
@@ -214,7 +218,7 @@ impl MediaApp {
                 }
 
                 Err(crossbeam_channel::TryRecvError::Empty) => {
-                    // Result not ready yet — keep polling next frame.
+                    // Result not ready yet - keep polling next frame.
                 }
 
                 Err(crossbeam_channel::TryRecvError::Disconnected) => {
@@ -244,7 +248,7 @@ impl eframe::App for MediaApp {
         self.poll_db(&ctx);
         self.handle_search_input();
         self.texture_manager.update(&ctx);
-        self.handle_scan_events(&ctx);
+        self.handle_scan_and_watch_events(&ctx);
 
         let window_frame = egui::Frame::NONE
             .fill(C_PRIMARY_BG)

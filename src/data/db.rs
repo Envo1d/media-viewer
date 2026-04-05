@@ -193,4 +193,13 @@ impl Database {
             )
             .ok();
     }
+
+    pub fn delete_by_path(&self, path: &str) {
+        if let Err(e) = self
+            .conn
+            .execute("DELETE FROM media WHERE path = ?1", rusqlite::params![path])
+        {
+            eprintln!("delete_by_path error: {e}");
+        }
+    }
 }

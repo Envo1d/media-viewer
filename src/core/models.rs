@@ -23,6 +23,7 @@ pub enum SortOrder {
 pub enum DbCommand {
     UpsertBatch(Vec<Arc<MediaItem>>, i64),
     DeleteNotSeen(i64),
+    DeleteByPath(String),
     Query {
         id: u64,
         limit: usize,
@@ -104,3 +105,13 @@ impl PartialEq for TextureTask {
 }
 
 impl Eq for TextureTask {}
+
+pub enum WatchEvent {
+    Refresh,
+}
+
+#[derive(Clone)]
+pub enum PendingKind {
+    Upsert,
+    Delete,
+}

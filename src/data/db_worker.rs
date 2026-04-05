@@ -19,6 +19,9 @@ fn start_db_worker() -> Sender<DbCommand> {
                 DbCommand::DeleteNotSeen(scan_id) => {
                     db.delete_not_seen(scan_id);
                 }
+                DbCommand::DeleteByPath(path) => {
+                    db.delete_by_path(&path);
+                }
                 DbCommand::Query {
                     id,
                     limit,

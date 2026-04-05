@@ -10,7 +10,10 @@ pub const C_TEXT_HEADER: Color32 = Color32::from_rgb(242, 243, 245);
 pub const C_SELECTED: Color32 = Color32::from_rgb(64, 67, 74);
 pub const C_BLURPLE: Color32 = Color32::from_rgb(88, 101, 242);
 
-// temp for card
-pub const ACCENT_BLUE: Color32 = Color32::from_rgb(61, 96, 163);
-pub const TEXT_LIGHT: Color32 = Color32::from_rgb(220, 220, 220);
-pub const TEXT_HIGHLIGHT: Color32 = Color32::from_rgb(255, 205, 0);
+pub const CARD_BG: Color32 = Color32::from_rgb(22, 22, 28);
+pub const INFO_BG: Color32 = Color32::from_rgb(30, 30, 38);
+pub const NAME_COLOR: Color32 = Color32::from_rgb(200, 200, 212);
+pub const META_COLOR: Color32 = Color32::from_rgba_premultiplied(160, 160, 175, 200);
+pub const BORDER_IDLE: Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 10);
+pub const HOVER_TINT: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 55);
+pub const PLAY_BG: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 155);

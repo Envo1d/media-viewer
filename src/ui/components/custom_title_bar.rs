@@ -1,90 +1,92 @@
 use crate::ui::app::MediaApp;
-use egui::{Align2, Color32, FontId, PointerButton, Sense, Vec2};
+use crate::ui::colors::{HOVER_CLOSE, HOVER_STANDARD, ICON_IDLE};
+use egui::{Color32, Image, PointerButton, Sense, Vec2};
 
-fn system_button(
-    ui: &mut egui::Ui,
-    text: &str,
-    hover_color: Color32,
-    text_color_hover: Color32,
-) -> egui::Response {
-    let desired_size = Vec2::new(30.0, ui.available_height());
+const ICON_SIZE: f32 = 12.0;
+const BTN_W: f32 = 36.0;
 
-    let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
+fn chrome_btn(ui: &mut egui::Ui, hover_bg: Color32, icon: &egui::TextureHandle) -> egui::Response {
+    let h = ui.available_height();
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(BTN_W, h), Sense::click());
 
     if ui.is_rect_visible(rect) {
-        let visuals = ui.style().interact(&response);
-        let painter = ui.painter();
-
-        if response.hovered() {
-            painter.rect_filled(rect, 0.0, hover_color);
+        if resp.hovered() {
+            ui.painter().rect_filled(rect, 0.0, hover_bg);
         }
 
-        let text_color = if response.hovered() {
-            text_color_hover
+        let tint = if resp.hovered() {
+            Color32::WHITE
         } else {
-            visuals.text_color()
+            ICON_IDLE
         };
 
-        painter.text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            text,
-            FontId::monospace(14.0),
-            text_color,
+        let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(ICON_SIZE));
+
+        ui.put(
+            icon_rect,
+            Image::new(icon)
+                .fit_to_exact_size(Vec2::splat(ICON_SIZE))
+                .tint(tint),
         );
     }
 
-    response
+    resp
 }
 
 pub fn custom_title_bar(ui: &mut egui::Ui, app: &mut MediaApp) {
-    let height = 32.0;
     let app_icon = app.app_icon.clone();
+    let icons = app.icons.as_ref().unwrap();
 
     ui.horizontal(|ui| {
-        ui.set_height(height);
-        ui.add_space(8.0);
+        ui.set_height(32.0);
+        ui.add_space(10.0);
 
         if let Some(icon) = app_icon {
-            ui.add(egui::Image::from_texture(&icon).fit_to_exact_size(Vec2::splat(20.0)));
+            ui.add(Image::from_texture(&icon).fit_to_exact_size(Vec2::splat(18.0)));
             ui.add_space(6.0);
         }
 
-        let rect = ui.available_rect_before_wrap();
-        let response = ui.interact(rect, ui.id().with("drag"), Sense::drag());
-
-        if response.dragged_by(PointerButton::Primary) {
+        let drag_rect = ui.available_rect_before_wrap();
+        let drag_resp = ui.interact(drag_rect, ui.id().with("drag"), Sense::drag());
+        if drag_resp.dragged_by(PointerButton::Primary) {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().button_padding = Vec2::ZERO;
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
 
-            let close_hover_bg = Color32::from_rgb(210, 45, 57);
-            let standard_hover_bg = Color32::from_rgb(29, 29, 30);
-            let icon_color = Color32::from_rgb(251, 251, 251);
-
-            if system_button(ui, "❌", close_hover_bg, icon_color).clicked() {
+            if chrome_btn(ui, HOVER_CLOSE, icons.get("close")).clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
 
+            ui.add_space(12.0);
+
             let is_maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
-            let max_symbol = if is_maximized { "🗗" } else { "🗖" };
-            if system_button(ui, max_symbol, standard_hover_bg, icon_color).clicked() {
+            let icon = if is_maximized {
+                icons.get("restore")
+            } else {
+                icons.get("maximize")
+            };
+
+            if chrome_btn(ui, HOVER_STANDARD, icon).clicked() {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
             }
 
-            if system_button(ui, "-", standard_hover_bg, icon_color).clicked() {
+            ui.add_space(12.0);
+
+            if chrome_btn(ui, HOVER_STANDARD, icons.get("minimize")).clicked() {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
 
-            ui.add_space(10.0);
+            ui.add_space(12.0);
 
-            if system_button(ui, "⚙", standard_hover_bg, icon_color).clicked() {
+            if chrome_btn(ui, HOVER_STANDARD, icons.get("settings")).clicked() {
                 app.settings_open = Some(true);
             }
+
+            ui.add_space(12.0);
         });
     });
 }

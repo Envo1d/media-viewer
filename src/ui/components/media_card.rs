@@ -1,6 +1,6 @@
 use crate::core::models::{MediaItem, MediaType};
 use crate::ui::colors::{
-    BORDER_IDLE, CARD_BG, C_BLURPLE, HOVER_TINT, INFO_BG, META_COLOR, NAME_COLOR, PLAY_BG,
+    BORDER, CARD_BG, C_BLURPLE, HOVER_TINT, INFO_BG, META_COLOR, NAME_COLOR, PLAY_BG,
 };
 use crate::ui::texture_manager::TextureManager;
 use egui::{
@@ -143,7 +143,7 @@ pub fn media_card(
 
     inner.line_segment(
         [info_rect.left_top(), info_rect.right_top()],
-        Stroke::new(1.0, Color32::from_rgba_premultiplied(255, 255, 255, 8)),
+        Stroke::new(1.0, BORDER),
     );
 
     {
@@ -164,7 +164,7 @@ pub fn media_card(
         CR,
         Stroke::new(
             if is_hovered { 1.5 } else { 1.0 },
-            if is_hovered { C_BLURPLE } else { BORDER_IDLE },
+            if is_hovered { C_BLURPLE } else { BORDER },
         ),
         StrokeKind::Outside,
     );

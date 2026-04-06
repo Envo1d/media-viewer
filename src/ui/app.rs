@@ -7,6 +7,7 @@ use crate::ui::colors::C_PRIMARY_BG;
 use crate::ui::components;
 use crate::ui::components::sidebar::sidebar;
 use crate::ui::fonts::setup_fonts;
+use crate::ui::icon_registry::IconRegistry;
 use crate::ui::scan_manager::ScanManager;
 use crate::ui::styles::apply_style;
 use crate::ui::texture_manager::TextureManager;
@@ -24,6 +25,7 @@ pub struct MediaApp {
     // Core
     pub config: AppConfig,
     pub texture_manager: TextureManager,
+    pub icons: Option<IconRegistry>,
 
     // UI state
     pub search_input: String,
@@ -71,14 +73,14 @@ impl MediaApp {
         cache::prune_cache(&cache_dir, 500);
 
         let app_icon = {
-            let icon_bytes = include_bytes!("../../assets/icon.png");
+            let icon_bytes = include_bytes!("../../assets/icons/icon.png");
             if let Ok(image) = load_image_bytes(icon_bytes) {
                 Some(
                     cc.egui_ctx
                         .load_texture("app_icon", image, Default::default()),
                 )
             } else {
-                eprintln!("Error: Unable to load assets/icon.png");
+                eprintln!("Error: Unable to load assets/icons/icon.png");
                 None
             }
         };
@@ -105,6 +107,7 @@ impl MediaApp {
             has_more: true,
             is_loading_more: false,
             last_search_input: String::new(),
+            icons: Some(IconRegistry::new(&cc.egui_ctx)),
         };
 
         app.refresh_items();

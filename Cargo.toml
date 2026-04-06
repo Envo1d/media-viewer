@@ -7,7 +7,6 @@ edition = "2024"
 egui = { version = "0.34.1" }
 egui_extras = { version = "0.34.1", features = ["image", "svg"] }
 eframe = { version = "0.34.1", features = ["glow"] }
-egui-twemoji = { version = "0.8.0" }
 image = { version = "0.25.10" }
 webp = { version = "0.3.1" }
 open = { version = "5.3.3" }
@@ -28,6 +27,7 @@ windows = { version = "0.62.2", features = [
 lru = { version = "0.16.3" }
 ignore = { version = "0.4.25" }
 notify = { version = "8.2.0" }
+usvg = "0.45.1"
 
 [build-dependencies]
 winres = { version = "0.1.12" }

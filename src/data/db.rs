@@ -9,40 +9,6 @@ pub struct Database {
     conn: Connection,
 }
 
-fn filter_clause(filter: &MediaFilter) -> &'static str {
-    match filter {
-        MediaFilter::All => "",
-        MediaFilter::Images => "AND media_type = 'Image'",
-        MediaFilter::Videos => "AND media_type = 'Video'",
-    }
-}
-
-fn filter_clause_fts(filter: &MediaFilter) -> &'static str {
-    match filter {
-        MediaFilter::All => "",
-        MediaFilter::Images => "AND m.media_type = 'Image'",
-        MediaFilter::Videos => "AND m.media_type = 'Video'",
-    }
-}
-
-fn order_clause(sort: &SortOrder) -> &'static str {
-    match sort {
-        SortOrder::NameAsc => "ORDER BY name ASC",
-        SortOrder::NameDesc => "ORDER BY name DESC",
-        SortOrder::DateDesc => "ORDER BY modified DESC",
-        SortOrder::DateAsc => "ORDER BY modified ASC",
-    }
-}
-
-fn fts_order_clause(sort: &SortOrder) -> &'static str {
-    match sort {
-        SortOrder::NameAsc => "ORDER BY m.name ASC",
-        SortOrder::NameDesc => "ORDER BY m.name DESC",
-        SortOrder::DateDesc => "ORDER BY m.modified DESC",
-        SortOrder::DateAsc => "ORDER BY m.modified ASC",
-    }
-}
-
 impl Database {
     pub fn new() -> Self {
         let path = AppConfig::get_db_path();
@@ -72,11 +38,11 @@ impl Database {
                 "INSERT INTO media (path, name, category, author, media_type, modified, last_seen_scan)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(path) DO UPDATE SET
-                    name          = excluded.name,
-                    category      = excluded.category,
-                    author        = excluded.author,
-                    media_type    = excluded.media_type,
-                    modified      = excluded.modified,
+                    name           = excluded.name,
+                    category       = excluded.category,
+                    author         = excluded.author,
+                    media_type     = excluded.media_type,
+                    modified       = excluded.modified,
                     last_seen_scan = ?7",
             ) {
                 Ok(s) => s,
@@ -84,7 +50,6 @@ impl Database {
             };
 
             for item in items {
-                let item = item.as_ref();
                 stmt.execute(rusqlite::params![
                     item.path,
                     item.name,
@@ -113,11 +78,11 @@ impl Database {
         let sql = format!(
             "SELECT path, name, category, author, media_type, modified
                FROM media
-              WHERE 1=1 {}
-              {}
+              WHERE 1=1 {filter}
+              {sort}
               LIMIT ?1 OFFSET ?2",
-            filter_clause(filter),
-            order_clause(sort),
+            filter = filter.to_sql(),
+            sort = sort.to_sql(),
         );
 
         let mut stmt = match self.conn.prepare(&sql) {
@@ -128,16 +93,15 @@ impl Database {
             }
         };
 
-        match stmt.query_map(
+        stmt.query_map(
             rusqlite::params![limit as i64, offset as i64],
             map_media_item,
-        ) {
-            Ok(rows) => rows.filter_map(Result::ok).collect(),
-            Err(e) => {
-                eprintln!("query error: {e}");
-                Vec::new()
-            }
-        }
+        )
+        .map(|rows| rows.filter_map(Result::ok).collect())
+        .unwrap_or_else(|e| {
+            eprintln!("query error: {e}");
+            Vec::new()
+        })
     }
 
     pub fn search(
@@ -149,7 +113,6 @@ impl Database {
         sort: &SortOrder,
     ) -> Vec<MediaItem> {
         let fts_query = build_search_query(input);
-
         if fts_query.is_empty() {
             return self.query(limit, offset, filter, sort);
         }
@@ -158,11 +121,11 @@ impl Database {
             "SELECT m.path, m.name, m.category, m.author, m.media_type, m.modified
                FROM media m
                JOIN media_fts ON m.rowid = media_fts.rowid
-              WHERE media_fts MATCH ?1 {}
-              {}
+              WHERE media_fts MATCH ?1 {filter}
+              {sort}
               LIMIT ?2 OFFSET ?3",
-            filter_clause_fts(filter),
-            fts_order_clause(sort),
+            filter = filter.to_sql_fts(),
+            sort = sort.to_sql_fts(),
         );
 
         let mut stmt = match self.conn.prepare(&sql) {
@@ -173,16 +136,15 @@ impl Database {
             }
         };
 
-        match stmt.query_map(
+        stmt.query_map(
             rusqlite::params![fts_query, limit as i64, offset as i64],
             map_media_item,
-        ) {
-            Ok(rows) => rows.filter_map(Result::ok).collect(),
-            Err(e) => {
-                eprintln!("search error: {e}");
-                Vec::new()
-            }
-        }
+        )
+        .map(|rows| rows.filter_map(Result::ok).collect())
+        .unwrap_or_else(|e| {
+            eprintln!("search error: {e}");
+            Vec::new()
+        })
     }
 
     pub fn delete_not_seen(&self, scan_id: i64) {

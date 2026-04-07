@@ -3,6 +3,8 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
+// Filter
+
 #[derive(Clone, PartialEq, Default)]
 pub enum MediaFilter {
     #[default]
@@ -10,6 +12,26 @@ pub enum MediaFilter {
     Images,
     Videos,
 }
+
+impl MediaFilter {
+    pub fn to_sql(&self) -> &'static str {
+        match self {
+            Self::All => "",
+            Self::Images => "AND media_type = 'Image'",
+            Self::Videos => "AND media_type = 'Video'",
+        }
+    }
+
+    pub fn to_sql_fts(&self) -> &'static str {
+        match self {
+            Self::All => "",
+            Self::Images => "AND m.media_type = 'Image'",
+            Self::Videos => "AND m.media_type = 'Video'",
+        }
+    }
+}
+
+// Sort
 
 #[derive(Clone, PartialEq, Default)]
 pub enum SortOrder {
@@ -19,6 +41,28 @@ pub enum SortOrder {
     DateDesc,
     DateAsc,
 }
+
+impl SortOrder {
+    pub fn to_sql(&self) -> &'static str {
+        match self {
+            Self::NameAsc => "ORDER BY name ASC",
+            Self::NameDesc => "ORDER BY name DESC",
+            Self::DateDesc => "ORDER BY modified DESC",
+            Self::DateAsc => "ORDER BY modified ASC",
+        }
+    }
+
+    pub fn to_sql_fts(&self) -> &'static str {
+        match self {
+            Self::NameAsc => "ORDER BY m.name ASC",
+            Self::NameDesc => "ORDER BY m.name DESC",
+            Self::DateDesc => "ORDER BY m.modified DESC",
+            Self::DateAsc => "ORDER BY m.modified ASC",
+        }
+    }
+}
+
+// Domain types
 
 pub enum DbCommand {
     UpsertBatch(Vec<Arc<MediaItem>>, i64),
@@ -68,14 +112,28 @@ impl MediaType {
     }
 }
 
+// Events
+
 #[derive(Clone)]
 pub enum ScanEvent {
     Progress(u64),
     Finished,
 }
 
+pub enum WatchEvent {
+    Refresh,
+}
+
+#[derive(Clone)]
+pub enum PendingKind {
+    Upsert,
+    Delete,
+}
+
+// Texture task
+
 pub struct TextureTask {
-    pub priority: i32, // 0 - visible, 10 - prefetch
+    pub priority: i32, // 0 = visible, 10 = prefetch
     pub path: String,
     pub timestamp: Instant,
 }
@@ -105,13 +163,3 @@ impl PartialEq for TextureTask {
 }
 
 impl Eq for TextureTask {}
-
-pub enum WatchEvent {
-    Refresh,
-}
-
-#[derive(Clone)]
-pub enum PendingKind {
-    Upsert,
-    Delete,
-}

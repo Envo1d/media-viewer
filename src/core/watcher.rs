@@ -1,85 +1,20 @@
-use crate::core::models::{DbCommand, MediaItem, MediaType, PendingKind, WatchEvent};
+use crate::core::models::{DbCommand, MediaItem, PendingKind, WatchEvent};
 use crate::data::db_worker::get_db;
 use crate::utils::current_timestamp;
+use crate::utils::{build_media_item, is_media_path};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, UNIX_EPOCH};
-use std::{fs, thread};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const DEBOUNCE_MS: u64 = 500;
 
 pub struct FileWatcher {
     _watcher: RecommendedWatcher,
     pub event_rx: Receiver<WatchEvent>,
-}
-
-fn is_media_ext(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| {
-            matches!(
-                e.to_lowercase().as_str(),
-                "mp4"
-                    | "mkv"
-                    | "avi"
-                    | "mov"
-                    | "wmv"
-                    | "flv"
-                    | "webm"
-                    | "jpg"
-                    | "jpeg"
-                    | "png"
-                    | "gif"
-                    | "webp"
-                    | "bmp"
-                    | "tiff"
-                    | "tif"
-            )
-        })
-        .unwrap_or(false)
-}
-
-fn build_media_item(root: &str, path: &Path) -> Option<Arc<MediaItem>> {
-    if !path.is_file() {
-        return None;
-    }
-
-    let ext = path.extension()?.to_str()?.to_lowercase();
-    let media_type = match ext.as_str() {
-        "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" => MediaType::Video,
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" => MediaType::Image,
-        _ => return None,
-    };
-
-    let metadata = fs::metadata(path).ok()?;
-    let modified = metadata
-        .modified()
-        .ok()?
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_secs() as i64;
-
-    let rel = path.strip_prefix(root).ok()?;
-    let parts: Vec<String> = rel
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().to_string())
-        .collect();
-
-    if parts.len() < 3 {
-        return None;
-    }
-
-    Some(Arc::new(MediaItem {
-        path: path.to_string_lossy().to_string(),
-        name: path.file_name()?.to_string_lossy().to_string(),
-        media_type,
-        category: parts[0].clone(),
-        author: parts[1].clone(),
-        modified,
-    }))
 }
 
 fn flush_ready(
@@ -114,8 +49,9 @@ fn flush_ready(
 
         match kind {
             PendingKind::Delete => {
-                let path_str = path.to_string_lossy().to_string();
-                db_tx.send(DbCommand::DeleteByPath(path_str)).ok();
+                db_tx
+                    .send(DbCommand::DeleteByPath(path.to_string_lossy().to_string()))
+                    .ok();
                 changed = true;
             }
             PendingKind::Upsert => {
@@ -143,11 +79,11 @@ fn debounce_loop(
     root: String,
 ) {
     let mut pending: HashMap<PathBuf, (PendingKind, Instant)> = HashMap::new();
-    let half_debounce = Duration::from_millis(DEBOUNCE_MS / 2);
     let debounce = Duration::from_millis(DEBOUNCE_MS);
+    let half = debounce / 2;
 
     loop {
-        match raw_rx.recv_timeout(half_debounce) {
+        match raw_rx.recv_timeout(half) {
             Ok(Ok(event)) => {
                 let kind = match event.kind {
                     EventKind::Remove(_) => PendingKind::Delete,
@@ -159,19 +95,14 @@ fn debounce_loop(
                 };
 
                 for path in event.paths {
-                    let relevant = matches!(kind, PendingKind::Delete) || is_media_ext(&path);
+                    let relevant = matches!(kind, PendingKind::Delete) || is_media_path(&path);
                     if relevant {
                         pending.insert(path, (kind.clone(), Instant::now()));
                     }
                 }
             }
-
-            Ok(Err(e)) => {
-                eprintln!("[watcher] notify error: {:?}", e);
-            }
-
+            Ok(Err(e)) => eprintln!("[watcher] notify error: {e:?}"),
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }
 
@@ -190,12 +121,12 @@ impl FileWatcher {
             },
             Config::default(),
         )
-        .map_err(|e| eprintln!("[watcher] failed to create watcher: {:?}", e))
+        .map_err(|e| eprintln!("[watcher] failed to create watcher: {e:?}"))
         .ok()?;
 
         watcher
             .watch(Path::new(&root_path), RecursiveMode::Recursive)
-            .map_err(|e| eprintln!("[watcher] failed to watch {:?}: {:?}", root_path, e))
+            .map_err(|e| eprintln!("[watcher] failed to watch {root_path:?}: {e:?}"))
             .ok()?;
 
         let db_tx = get_db().clone();
@@ -207,7 +138,7 @@ impl FileWatcher {
             .spawn(move || debounce_loop(raw_rx, db_tx, watch_tx_bg, root))
             .ok()?;
 
-        eprintln!("[watcher] watching: {}", root_path);
+        eprintln!("[watcher] watching: {root_path}");
 
         Some(Self {
             _watcher: watcher,

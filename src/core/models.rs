@@ -2,7 +2,6 @@ use crossbeam_channel::Sender;
 use std::cmp::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
-
 // Filter
 
 #[derive(Clone, PartialEq, Default)]
@@ -136,6 +135,7 @@ pub struct TextureTask {
     pub priority: i32, // 0 = visible, 10 = prefetch
     pub path: String,
     pub timestamp: Instant,
+    pub generation: u64,
 }
 
 impl Ord for TextureTask {

@@ -5,7 +5,7 @@ use egui::{Ui, Vec2};
 const SIDE_PAD: f32 = 18.0;
 const COL_GAP: f32 = 10.0;
 const ROW_GAP: f32 = 10.0;
-const PREFETCH_MARGIN: usize = 3;
+const PREFETCH_MARGIN: usize = 2;
 const LOAD_AHEAD_PX: f32 = 1200.0;
 const TOP_PAD: f32 = 12.0;
 const BOTTOM_PAD: f32 = 28.0;
@@ -24,9 +24,8 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
     let h_pad = SIDE_PAD + ((usable_w - grid_w) * 0.5).max(0.0);
 
     let row_h = card_sz + ROW_GAP;
-
-    let total_rows = (app.displayed_items.len() + columns - 1) / columns;
-    let items = &app.displayed_items;
+    let total_items = app.displayed_items.len();
+    let total_rows = (total_items + columns - 1) / columns;
 
     let out = egui::ScrollArea::vertical()
         .animated(false)
@@ -36,31 +35,21 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
                 ui.add_space(TOP_PAD);
             }
 
-            let pre_start = row_range.start.saturating_sub(PREFETCH_MARGIN);
-            let pre_end = (row_range.end + PREFETCH_MARGIN).min(total_rows);
+            let vis_start = row_range.start * columns;
+            let vis_end = (row_range.end * columns).min(total_items);
 
-            for p_row in (pre_start..row_range.start).chain(row_range.end..pre_end) {
-                for col in 0..columns {
-                    if let Some(item) = items.get(p_row * columns + col) {
-                        app.texture_manager.prefetch(&item.path);
-                    }
-                }
-            }
-
-            for row in row_range {
+            for row in row_range.clone() {
                 ui.horizontal(|ui| {
                     ui.add_space(h_pad);
 
                     for col in 0..columns {
-                        let idx = row * columns + col;
-                        if idx >= items.len() {
+                        let Some(item) = app.displayed_items.get(row * columns + col) else {
                             break;
-                        }
-                        if let Some(item) = items.get(idx) {
-                            media_card(ui, item, &mut app.texture_manager, card_sz);
-                        }
-                        let next_idx = row * columns + col + 1;
-                        if col + 1 < columns && next_idx < items.len() {
+                        };
+                        media_card(ui, item, &mut app.texture_manager, card_sz);
+                        if col + 1 < columns
+                            && app.displayed_items.get(row * columns + col + 1).is_some()
+                        {
                             ui.add_space(COL_GAP);
                         }
                     }
@@ -68,10 +57,25 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
                     ui.add_space(h_pad);
                 });
 
-                ui.add_space(COL_GAP);
+                ui.add_space(ROW_GAP);
             }
 
             ui.add_space(BOTTOM_PAD);
+
+            let pre_start = row_range.start.saturating_sub(PREFETCH_MARGIN) * columns;
+            let pre_end = (row_range.end + PREFETCH_MARGIN).min(total_rows) * columns;
+
+            for idx in pre_start..vis_start {
+                if let Some(item) = app.displayed_items.get(idx) {
+                    app.texture_manager.prefetch(&item.path);
+                }
+            }
+
+            for idx in vis_end..pre_end.min(total_items) {
+                if let Some(item) = app.displayed_items.get(idx) {
+                    app.texture_manager.prefetch(&item.path);
+                }
+            }
         });
 
     let scroll_y = out.state.offset.y;

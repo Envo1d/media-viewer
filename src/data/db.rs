@@ -14,6 +14,16 @@ impl Database {
         let path = AppConfig::get_db_path();
         let mut conn = Connection::open(path).expect("Cannot open SQLite database");
 
+        conn.execute_batch(
+            "PRAGMA journal_mode    = WAL;
+             PRAGMA synchronous     = NORMAL;
+             PRAGMA cache_size      = -65536;
+             PRAGMA temp_store      = MEMORY;
+             PRAGMA mmap_size       = 268435456;
+             PRAGMA wal_autocheckpoint = 1000;",
+        )
+        .expect("Failed to configure SQLite pragmas");
+
         let tx = conn
             .transaction()
             .expect("Cannot begin migration transaction");
@@ -34,8 +44,22 @@ impl Database {
         };
 
         {
-            let mut stmt = match tx.prepare_cached(
-                "INSERT INTO media (path, name, category, author, media_type, modified, last_seen_scan)
+            let mut touch = match tx.prepare_cached(
+                "UPDATE media
+                    SET last_seen_scan = ?3
+                  WHERE path = ?1
+                    AND modified = ?2",
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("touch prepare error: {e}");
+                    return;
+                }
+            };
+
+            let mut upsert = match tx.prepare_cached(
+                "INSERT INTO media
+                    (path, name, category, author, media_type, modified, last_seen_scan)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(path) DO UPDATE SET
                     name           = excluded.name,
@@ -43,23 +67,33 @@ impl Database {
                     author         = excluded.author,
                     media_type     = excluded.media_type,
                     modified       = excluded.modified,
-                    last_seen_scan = ?7",
+                    last_seen_scan = excluded.last_seen_scan",
             ) {
                 Ok(s) => s,
-                Err(e) => { eprintln!("upsert prepare error: {e}"); return; }
+                Err(e) => {
+                    eprintln!("upsert prepare error: {e}");
+                    return;
+                }
             };
 
             for item in items {
-                stmt.execute(rusqlite::params![
-                    item.path,
-                    item.name,
-                    item.category,
-                    item.author,
-                    item.media_type.as_str(),
-                    item.modified,
-                    scan_id,
-                ])
-                .ok();
+                let touched = touch
+                    .execute(rusqlite::params![item.path, item.modified, scan_id])
+                    .unwrap_or(0);
+
+                if touched == 0 {
+                    upsert
+                        .execute(rusqlite::params![
+                            item.path,
+                            item.name,
+                            item.category,
+                            item.author,
+                            item.media_type.as_str(),
+                            item.modified,
+                            scan_id,
+                        ])
+                        .ok();
+                }
             }
         }
 
@@ -148,12 +182,12 @@ impl Database {
     }
 
     pub fn delete_not_seen(&self, scan_id: i64) {
-        self.conn
-            .execute(
-                "DELETE FROM media WHERE last_seen_scan != ?1",
-                rusqlite::params![scan_id],
-            )
-            .ok();
+        if let Err(e) = self.conn.execute(
+            "DELETE FROM media WHERE last_seen_scan < ?1",
+            rusqlite::params![scan_id],
+        ) {
+            eprintln!("delete_not_seen error: {e}");
+        }
     }
 
     pub fn delete_by_path(&self, path: &str) {

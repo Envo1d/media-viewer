@@ -77,6 +77,7 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     });
 
     if app.filter != prev_filter || app.sort != prev_sort {
+        app.texture_manager.invalidate_prefetch();
         app.refresh_items();
     }
 

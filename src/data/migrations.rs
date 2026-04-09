@@ -123,7 +123,8 @@ pub fn run_migrations(tx: &Transaction) {
             "INSERT INTO media_fts(rowid, path, name, category, author)
                 SELECT rowid, path, name, category, author FROM media",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         version = 4;
         set_version(tx, version);
@@ -141,6 +142,30 @@ pub fn run_migrations(tx: &Transaction) {
             .unwrap();
 
         version = 5;
+        set_version(tx, version);
+    }
+
+    // === MIGRATION 6 ===
+    if version < 6 {
+        tx.execute("DROP TRIGGER IF EXISTS trg_media_au", [])
+            .unwrap();
+
+        tx.execute(
+            "CREATE TRIGGER trg_media_au AFTER UPDATE ON media
+             WHEN old.name     != new.name
+               OR old.category != new.category
+               OR old.author   != new.author
+               OR old.path     != new.path
+             BEGIN
+                 DELETE FROM media_fts WHERE rowid = old.rowid;
+                 INSERT INTO media_fts(rowid, path, name, category, author)
+                 VALUES (new.rowid, new.path, new.name, new.category, new.author);
+             END;",
+            [],
+        )
+        .unwrap();
+
+        version = 6;
         set_version(tx, version);
     }
 }

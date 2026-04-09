@@ -2,29 +2,34 @@ use crate::core::models::TextureTask;
 use crate::infra::cache::load_or_generate;
 use crate::infra::config::AppConfig;
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{bounded, select_biased, Receiver, Sender};
 use egui::{ColorImage, Context, TextureHandle};
 use image::{Rgba, RgbaImage};
-
-use std::cell::RefCell;
-use std::collections::HashSet;
-use std::num::NonZeroUsize;
+use std::collections::HashMap;
+use std::collections::{HashSet, VecDeque};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
-use std::thread::{spawn, JoinHandle};
-
-use lru::LruCache;
+use std::thread::JoinHandle;
+use std::time::Instant;
 
 const THUMB_SIZE: u32 = 120;
-const MAX_TEXTURES: usize = 400;
+const MAX_READY: usize = 600;
+const VISIBLE_QUEUE: usize = 64;
+const PREFETCH_QUEUE: usize = 128;
+const RESULT_QUEUE: usize = 512;
+const MAX_UPLOADS_PER_FRAME: usize = 16;
 
 pub struct TextureManager {
-    cache: RefCell<LruCache<String, TextureHandle>>,
-    failed: RefCell<HashSet<String>>,
-    loading: RefCell<HashSet<String>>,
+    ready: HashMap<String, TextureHandle>,
+    loading: HashSet<String>,
+    failed: HashSet<String>,
 
+    // FIFO eviction
+    eviction_order: VecDeque<String>,
+
+    // Worker pipeline
     visible_tx: Option<Sender<TextureTask>>,
     prefetch_tx: Option<Sender<TextureTask>>,
     result_rx: Receiver<(String, Option<RgbaImage>)>,
@@ -32,63 +37,77 @@ pub struct TextureManager {
     workers: Vec<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
 
+    generation: Arc<AtomicU64>,
+
     placeholder: TextureHandle,
 }
 
 impl TextureManager {
     pub fn new(ctx: &Context) -> Self {
-        let (visible_tx, visible_rx) = bounded::<TextureTask>(512);
-        let (prefetch_tx, prefetch_rx) = bounded::<TextureTask>(512);
-        let (result_tx, result_rx) = bounded::<(String, Option<RgbaImage>)>(1024);
+        let (visible_tx, visible_rx) = bounded::<TextureTask>(VISIBLE_QUEUE);
+        let (prefetch_tx, prefetch_rx) = bounded::<TextureTask>(PREFETCH_QUEUE);
+        let (result_tx, result_rx) = bounded::<(String, Option<RgbaImage>)>(RESULT_QUEUE);
 
         let cache_dir = AppConfig::get_cache_dir();
         let shutdown = Arc::new(AtomicBool::new(false));
+        let generation = Arc::new(AtomicU64::new(0));
         let mut workers = Vec::new();
 
-        let worker_count = std::cmp::min(6, num_cpus::get());
+        let worker_count = num_cpus::get().clamp(2, 4);
 
         for _ in 0..worker_count {
             let visible_rx = visible_rx.clone();
             let prefetch_rx = prefetch_rx.clone();
             let result_tx = result_tx.clone();
             let shutdown = shutdown.clone();
+            let generation = generation.clone();
             let cache_dir = cache_dir.clone();
 
-            let handle = spawn(move || {
-                #[cfg(windows)]
-                unsafe {
-                    use windows::Win32::System::Com::*;
-                    let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-                }
-
-                loop {
-                    if shutdown.load(Ordering::Relaxed) {
-                        break;
+            let handle = std::thread::Builder::new()
+                .name("nexa-thumb-worker".into())
+                .spawn(move || {
+                    #[cfg(windows)]
+                    unsafe {
+                        use windows::Win32::System::Com::*;
+                        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
                     }
 
-                    let task = match visible_rx.try_recv() {
-                        Ok(t) => t,
-                        Err(_) => match prefetch_rx.recv() {
-                            Ok(t) => t,
-                            Err(_) => break,
-                        },
-                    };
+                    loop {
+                        if shutdown.load(Ordering::Relaxed) {
+                            break;
+                        }
 
-                    let img = load_or_generate(&cache_dir, &task.path, THUMB_SIZE);
-                    let _ = result_tx.send((task.path, img));
-                }
+                        let task = select_biased! {
+                            recv(visible_rx) -> r => match r {
+                                Ok(t)  => t,
+                                Err(_) => break,
+                            },
+                            recv(prefetch_rx) -> r => match r {
+                                Ok(t)  => t,
+                                Err(_) => break,
+                            },
+                        };
 
-                #[cfg(windows)]
-                unsafe {
-                    use windows::Win32::System::Com::*;
-                    CoUninitialize();
-                }
-            });
+                        if task.generation != generation.load(Ordering::Relaxed) {
+                            continue;
+                        }
+
+                        let img = load_or_generate(&cache_dir, &task.path, THUMB_SIZE);
+
+                        let _ = result_tx.try_send((task.path, img));
+                    }
+
+                    #[cfg(windows)]
+                    unsafe {
+                        use windows::Win32::System::Com::*;
+                        CoUninitialize();
+                    }
+                })
+                .expect("Failed to spawn thumbnail worker");
 
             workers.push(handle);
         }
 
-        // Gray placeholder shown while a thumbnail is loading
         let placeholder = {
             let img = RgbaImage::from_pixel(THUMB_SIZE, THUMB_SIZE, Rgba([80, 80, 80, 255]));
             let pixels: Vec<u8> = img.pixels().flat_map(|p| p.0).collect();
@@ -103,14 +122,16 @@ impl TextureManager {
         };
 
         Self {
-            cache: RefCell::new(LruCache::new(NonZeroUsize::new(MAX_TEXTURES).unwrap())),
-            failed: RefCell::new(HashSet::new()),
-            loading: RefCell::new(HashSet::new()),
+            ready: HashMap::with_capacity(MAX_READY + 64),
+            loading: HashSet::new(),
+            failed: HashSet::new(),
+            eviction_order: VecDeque::with_capacity(MAX_READY + 64),
             visible_tx: Some(visible_tx),
             prefetch_tx: Some(prefetch_tx),
             result_rx,
             workers,
             shutdown,
+            generation,
             placeholder,
         }
     }
@@ -119,82 +140,107 @@ impl TextureManager {
         self.process_results(ctx);
     }
 
-    pub fn get(&self, path: &str) -> TextureHandle {
-        if let Some(tex) = self.cache.borrow_mut().get(path) {
+    pub fn get(&mut self, path: &str) -> TextureHandle {
+        if let Some(tex) = self.ready.get(path) {
             return tex.clone();
         }
 
-        if self.failed.borrow().contains(path) {
+        if self.loading.contains(path) {
             return self.placeholder.clone();
         }
 
-        let mut loading = self.loading.borrow_mut();
-        if !loading.contains(path) {
-            let task = TextureTask {
-                path: path.to_string(),
-                priority: 0,
-                timestamp: std::time::Instant::now(),
-            };
-            if self.visible_tx.as_ref().unwrap().send(task).is_ok() {
-                loading.insert(path.to_string());
-            }
+        if self.failed.contains(path) {
+            return self.placeholder.clone();
+        }
+
+        let task = TextureTask {
+            path: path.to_string(),
+            priority: 0,
+            generation: self.generation.load(Ordering::Relaxed),
+            timestamp: Instant::now(),
+        };
+
+        if self.visible_tx.as_ref().unwrap().try_send(task).is_ok() {
+            self.loading.insert(path.to_string());
         }
 
         self.placeholder.clone()
     }
 
-    pub fn prefetch(&self, path: &str) {
-        if self.cache.borrow().contains(path) {
+    pub fn prefetch(&mut self, path: &str) {
+        let visible_pending = self.visible_tx.as_ref().map(|tx| tx.len()).unwrap_or(0);
+        if visible_pending > 0 {
             return;
         }
-        let mut loading = self.loading.borrow_mut();
-        if loading.contains(path) {
+
+        if self.ready.contains_key(path)
+            || self.loading.contains(path)
+            || self.failed.contains(path)
+        {
             return;
         }
+
         let task = TextureTask {
             path: path.to_string(),
             priority: 10,
-            timestamp: std::time::Instant::now(),
+            generation: self.generation.load(Ordering::Relaxed),
+            timestamp: Instant::now(),
         };
-        if self.prefetch_tx.as_ref().unwrap().send(task).is_ok() {
-            loading.insert(path.to_string());
+        if self.prefetch_tx.as_ref().unwrap().try_send(task).is_ok() {
+            self.loading.insert(path.to_string());
         }
     }
 
+    pub fn invalidate_prefetch(&mut self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
+
+        self.loading.clear();
+    }
+
     fn process_results(&mut self, ctx: &Context) {
-        let max_per_frame = 32;
-        let mut processed = 0;
+        let mut uploaded = 0;
 
-        loop {
-            if processed >= max_per_frame {
-                break;
-            }
-
+        while uploaded < MAX_UPLOADS_PER_FRAME {
             match self.result_rx.try_recv() {
-                Ok((path, img_opt)) => {
-                    self.loading.borrow_mut().remove(&path);
+                Ok((path, Some(img))) => {
+                    self.loading.remove(&path);
 
-                    if let Some(img) = img_opt {
-                        let size = [img.width() as usize, img.height() as usize];
-                        let texture = ctx.load_texture(
-                            &path,
-                            ColorImage::from_rgba_unmultiplied(size, img.as_raw()),
-                            Default::default(),
-                        );
-                        self.failed.borrow_mut().remove(&path);
-                        self.cache.borrow_mut().put(path, texture);
-                    } else {
-                        self.failed.borrow_mut().insert(path);
+                    if self.ready.len() >= MAX_READY {
+                        self.evict_one();
                     }
 
-                    processed += 1;
+                    let size = [img.width() as usize, img.height() as usize];
+                    let tex = ctx.load_texture(
+                        &path,
+                        ColorImage::from_rgba_unmultiplied(size, img.as_raw()),
+                        Default::default(),
+                    );
+                    self.ready.insert(path.clone(), tex);
+                    self.eviction_order.push_back(path);
+
+                    uploaded += 1;
                 }
+
+                Ok((path, None)) => {
+                    self.loading.remove(&path);
+                    self.failed.insert(path);
+                    uploaded += 1;
+                }
+
                 Err(_) => break,
             }
         }
 
-        if processed > 0 {
+        if uploaded > 0 {
             ctx.request_repaint();
+        }
+    }
+
+    fn evict_one(&mut self) {
+        while let Some(oldest) = self.eviction_order.pop_front() {
+            if self.ready.remove(&oldest).is_some() {
+                return;
+            }
         }
     }
 }
@@ -202,7 +248,6 @@ impl TextureManager {
 impl Drop for TextureManager {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
-
         drop(self.visible_tx.take());
         drop(self.prefetch_tx.take());
         for w in self.workers.drain(..) {

@@ -119,7 +119,7 @@ impl Database {
             sort = sort.to_sql(),
         );
 
-        let mut stmt = match self.conn.prepare(&sql) {
+        let mut stmt = match self.conn.prepare_cached(&sql) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("query prepare error: {e}");
@@ -162,7 +162,7 @@ impl Database {
             sort = sort.to_sql_fts(),
         );
 
-        let mut stmt = match self.conn.prepare(&sql) {
+        let mut stmt = match self.conn.prepare_cached(&sql) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("search prepare error: {e}");

@@ -73,7 +73,8 @@ impl MediaApp {
 
         let cache_dir = AppConfig::get_cache_dir();
         let _ = fs::create_dir_all(&cache_dir);
-        cache::prune_cache(&cache_dir, 500);
+
+        cache::prune_cache_async(cache_dir, 500);
 
         let app_icon = {
             let icon_bytes = include_bytes!("../../assets/icons/icon.png");
@@ -221,7 +222,7 @@ impl MediaApp {
             let (snapshot_id, db_id, ref rx) = self.pending_queries[i];
 
             if snapshot_id != current {
-                self.pending_queries.remove(i);
+                self.pending_queries.swap_remove(i);
                 self.is_loading_more = false;
                 continue;
             }
@@ -242,14 +243,14 @@ impl MediaApp {
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => false,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                    eprintln!("[app] poll_db: channel disconnected, resetting load state");
+                    eprintln!("[app] poll_db: channel disconnected");
                     self.is_loading_more = false;
                     true
                 }
             };
 
             if remove {
-                self.pending_queries.remove(i);
+                self.pending_queries.swap_remove(i);
             } else {
                 i += 1;
             }

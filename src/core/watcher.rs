@@ -1,7 +1,7 @@
 use crate::core::models::{DbCommand, MediaItem, PendingKind, WatchEvent};
 use crate::data::db_worker::get_db;
-use crate::utils::current_timestamp;
-use crate::utils::{build_media_item, is_media_path};
+use crate::utils::is_media_path;
+use crate::utils::{build_media_item, current_timestamp};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
@@ -29,30 +29,23 @@ fn flush_ready(
     }
 
     let now = Instant::now();
-
-    let ready: Vec<(PathBuf, PendingKind)> = pending
-        .iter()
-        .filter(|(_, (_, t))| now.duration_since(*t) >= debounce)
-        .map(|(p, (k, _))| (p.clone(), k.clone()))
-        .collect();
-
-    if ready.is_empty() {
-        return;
-    }
-
     let scan_id = current_timestamp();
     let mut upserts: Vec<Arc<MediaItem>> = Vec::new();
     let mut changed = false;
 
-    for (path, kind) in &ready {
-        pending.remove(path);
+    pending.retain(|path, (kind, timestamp)| {
+        if now.duration_since(*timestamp) < debounce {
+            return true;
+        }
 
         match kind {
             PendingKind::Delete => {
-                db_tx
-                    .send(DbCommand::DeleteByPath(path.to_string_lossy().to_string()))
-                    .ok();
-                changed = true;
+                if is_media_path(path) {
+                    db_tx
+                        .send(DbCommand::DeleteByPath(path.to_string_lossy().to_string()))
+                        .ok();
+                    changed = true;
+                }
             }
             PendingKind::Upsert => {
                 if let Some(item) = build_media_item(root, path) {
@@ -61,7 +54,9 @@ fn flush_ready(
                 }
             }
         }
-    }
+
+        false
+    });
 
     if !upserts.is_empty() {
         db_tx.send(DbCommand::UpsertBatch(upserts, scan_id)).ok();

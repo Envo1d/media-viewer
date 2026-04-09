@@ -2,7 +2,10 @@ use crate::core::models::{ScanEvent, WatchEvent};
 use crate::core::scanner::MediaScanner;
 use crate::core::watcher::FileWatcher;
 use crate::data::db_worker::get_db;
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{bounded, Receiver};
+
+const MAX_SCAN_EVENTS_PER_FRAME: usize = 32;
+const SCAN_EVENT_CAPACITY: usize = 256;
 
 pub struct ScanManager {
     pub is_scanning: bool,
@@ -26,18 +29,14 @@ impl ScanManager {
     }
 
     pub fn start(&mut self, root_path: String) {
-        if self.is_scanning {
-            return;
-        }
-
-        if root_path.is_empty() {
+        if self.is_scanning || root_path.is_empty() {
             return;
         }
 
         self.watcher = None;
         self.watched_path = Some(root_path.clone());
 
-        let (tx, rx) = crossbeam_channel::unbounded();
+        let (tx, rx) = bounded(SCAN_EVENT_CAPACITY);
         self.scan_rx = Some(rx);
         self.is_scanning = true;
         self.files_scanned = 0;
@@ -57,7 +56,7 @@ impl ScanManager {
         let mut finished = false;
 
         if let Some(rx) = &self.scan_rx {
-            for event in rx.try_iter() {
+            for event in rx.try_iter().take(MAX_SCAN_EVENTS_PER_FRAME) {
                 match event {
                     ScanEvent::Progress(n) => {
                         self.files_scanned += n;
@@ -87,11 +86,10 @@ impl ScanManager {
         };
 
         let mut changed = false;
+
         for event in watcher.event_rx.try_iter() {
             match event {
-                WatchEvent::Refresh => {
-                    changed = true;
-                }
+                WatchEvent::Refresh => changed = true,
             }
         }
         changed

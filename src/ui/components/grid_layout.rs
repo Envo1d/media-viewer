@@ -43,13 +43,14 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
                     ui.add_space(h_pad);
 
                     for col in 0..columns {
-                        let Some(item) = app.displayed_items.get(row * columns + col) else {
+                        let idx = row * columns + col;
+                        let Some(item) = app.displayed_items.get(idx) else {
                             break;
                         };
+
                         media_card(ui, item, &mut app.texture_manager, card_sz);
-                        if col + 1 < columns
-                            && app.displayed_items.get(row * columns + col + 1).is_some()
-                        {
+
+                        if col + 1 < columns && idx + 1 < total_items {
                             ui.add_space(COL_GAP);
                         }
                     }

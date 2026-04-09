@@ -19,7 +19,9 @@ fn preview_cache_path(cache_dir: &PathBuf, file_path: &str) -> PathBuf {
 
 fn save_as_webp_lossy(path: &PathBuf, img: &RgbaImage, quality: f32) {
     let encoder = Encoder::from_rgba(img, img.width(), img.height());
-    let quality = quality.min(100.0).max(0.0);
+
+    let quality = quality.clamp(0.0, 100.0);
+
     let webp_data = encoder.encode(quality);
 
     let _ = fs::write(path, &*webp_data);
@@ -46,6 +48,13 @@ pub fn load_or_generate(cache_dir: &PathBuf, path: &str, thumb_size: u32) -> Opt
     None
 }
 
+pub fn prune_cache_async(cache_dir: PathBuf, max_size_mb: u64) {
+    std::thread::Builder::new()
+        .name("nexa-cache-prune".into())
+        .spawn(move || prune_cache(&cache_dir, max_size_mb))
+        .ok();
+}
+
 pub fn prune_cache(cache_dir: &PathBuf, max_size_mb: u64) {
     let max_size_bytes = max_size_mb * 1024 * 1024;
 
@@ -69,20 +78,20 @@ pub fn prune_cache(cache_dir: &PathBuf, max_size_mb: u64) {
         })
         .collect();
 
-    let mut current_size: u64 = files.iter().map(|f| f.1).sum();
-
+    let current_size: u64 = files.iter().map(|f| f.1).sum();
     if current_size <= max_size_bytes {
         return;
     }
 
-    files.sort_by_key(|f| f.2);
+    files.sort_unstable_by_key(|f| f.2);
 
+    let mut remaining = current_size;
     for (path, size, _) in files {
-        if current_size <= max_size_bytes {
+        if remaining <= max_size_bytes {
             break;
         }
         if fs::remove_file(path).is_ok() {
-            current_size -= size;
+            remaining -= size;
         }
     }
 }

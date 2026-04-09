@@ -5,6 +5,7 @@ use crate::ui::components::search_input::search_input;
 use crate::ui::components::widgets::filter_chip::filter_chip;
 use crate::ui::components::widgets::section_heading::section_heading;
 use crate::ui::components::widgets::sort_row::sort_row;
+use crate::ui::components::widgets::toggle::toggle;
 use egui::{CornerRadius, Frame, Margin, RichText};
 
 pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
@@ -75,6 +76,16 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.label(RichText::new("L").color(C_TEXT_MUTED).size(11.0));
     });
+
+    section_heading(ui, "SHOW PREVIEWS");
+
+    let id = ui.make_persistent_id("toggle_previews");
+
+    if toggle(ui, id, &mut app.show_previews) {
+        if !app.show_previews {
+            app.texture_manager.invalidate_prefetch();
+        }
+    }
 
     if app.filter != prev_filter || app.sort != prev_sort {
         app.texture_manager.invalidate_prefetch();

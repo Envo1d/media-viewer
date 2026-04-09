@@ -48,7 +48,13 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
                             break;
                         };
 
-                        media_card(ui, item, &mut app.texture_manager, card_sz);
+                        media_card(
+                            ui,
+                            item,
+                            &mut app.texture_manager,
+                            card_sz,
+                            app.show_previews,
+                        );
 
                         if col + 1 < columns && idx + 1 < total_items {
                             ui.add_space(COL_GAP);

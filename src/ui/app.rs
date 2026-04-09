@@ -37,6 +37,7 @@ pub struct MediaApp {
     pub filter: MediaFilter,
     pub sort: SortOrder,
     pub card_size: f32,
+    pub show_previews: bool,
 
     // Data
     pub scan_manager: ScanManager,
@@ -113,6 +114,7 @@ impl MediaApp {
             has_more: true,
             is_loading_more: false,
             icons: Some(IconRegistry::new(&cc.egui_ctx)),
+            show_previews: true,
         };
 
         app.refresh_items();

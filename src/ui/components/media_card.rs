@@ -12,11 +12,29 @@ use egui::{
 const CR: u8 = 8;
 const INFO_H: f32 = 30.0;
 
+fn render_placeholder(painter: &egui::Painter, rect: Rect, item: &MediaItem) {
+    painter.rect_filled(rect, 8.0, CARD_BG);
+
+    let icon = match item.media_type {
+        MediaType::Image => "🖼",
+        MediaType::Video => "🎬",
+    };
+
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        icon,
+        FontId::proportional(28.0),
+        Color32::from_gray(140),
+    );
+}
+
 pub fn media_card(
     ui: &mut Ui,
     item: &MediaItem,
     texture_manager: &mut TextureManager,
     size: f32,
+    show_texture: bool,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
 
@@ -65,18 +83,27 @@ pub fn media_card(
 
     let img_area = Rect::from_min_size(rect.min, Vec2::new(size, size - INFO_H));
 
-    let texture = texture_manager.get(&item.path);
-    let tex_sz = texture.size_vec2();
-    let scale = (img_area.width() / tex_sz.x).min(img_area.height() / tex_sz.y);
-    let img_sz = tex_sz * scale;
-    let img_min = img_area.center() - img_sz / 2.0;
+    let texture = if show_texture {
+        Some(texture_manager.get(&item.path))
+    } else {
+        None
+    };
 
-    inner.image(
-        texture.id(),
-        Rect::from_min_size(img_min, img_sz),
-        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-        Color32::WHITE,
-    );
+    if let Some(tex) = texture {
+        let tex_sz = tex.size_vec2();
+        let scale = (img_area.width() / tex_sz.x).min(img_area.height() / tex_sz.y);
+        let img_sz = tex_sz * scale;
+        let img_min = img_area.center() - img_sz / 2.0;
+
+        inner.image(
+            tex.id(),
+            Rect::from_min_size(img_min, img_sz),
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    } else {
+        render_placeholder(&inner, img_area, item);
+    }
 
     if matches!(item.media_type, MediaType::Video) {
         let cc = img_area.center();

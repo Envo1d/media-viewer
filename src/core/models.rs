@@ -67,6 +67,10 @@ pub enum DbCommand {
     UpsertBatch(Vec<Arc<MediaItem>>, i64),
     DeleteNotSeen(i64),
     DeleteByPath(String),
+    UpdateTags {
+        path: String,
+        tags: String,
+    },
     Query {
         id: u64,
         limit: usize,
@@ -91,9 +95,28 @@ pub struct MediaItem {
     pub path: String,
     pub name: String,
     pub media_type: MediaType,
-    pub category: String,
-    pub author: String,
+    pub copyright: String,
+    pub artist: String,
+    pub characters: Vec<String>,
+    pub tags: Vec<String>,
     pub modified: i64,
+}
+
+impl MediaItem {
+    pub fn characters_db(&self) -> String {
+        self.characters.join("|")
+    }
+
+    pub fn parse_pipe_list(s: &str) -> Vec<String> {
+        if s.is_empty() {
+            return Vec::new();
+        }
+        s.split('|')
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

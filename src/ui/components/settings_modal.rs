@@ -1,9 +1,9 @@
 use crate::infra::config::AppConfig;
 use crate::ui::app::MediaApp;
 use crate::ui::colors::{
-    BACKDROP, BORDER, CARD_BG, C_BLURPLE, C_INPUT_BG, C_TEXT, C_TEXT_HEADER, C_TEXT_MUTED, DANGER
-    ,
+    BACKDROP, BORDER, CARD_BG, C_BLURPLE, C_INPUT_BG, C_TEXT, C_TEXT_HEADER, C_TEXT_MUTED, DANGER,
 };
+use crate::ui::components::widgets::combo_box::combo_box;
 use crate::ui::components::widgets::danger_button::danger_button;
 use crate::ui::components::widgets::pill_button::pill_button;
 use crate::ui::components::widgets::section_heading::section_heading;
@@ -37,6 +37,14 @@ fn clear_cache(cache_dir: &std::path::Path) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
+}
+
+const DEPTH_OPTIONS: &[&str] = &[
+    "Level 1", "Level 2", "Level 3", "Level 4", "Level 5", "Level 6",
+];
+
+fn depth_to_label(depth: usize) -> &'static str {
+    DEPTH_OPTIONS.get(depth).copied().unwrap_or("Level 1")
 }
 
 fn library_section(app: &mut MediaApp, ui: &mut egui::Ui) {
@@ -92,12 +100,125 @@ fn library_section(app: &mut MediaApp, ui: &mut egui::Ui) {
     });
 }
 
+fn structure_section(app: &mut MediaApp, ui: &mut egui::Ui, rescan_requested: &mut bool) {
+    section_heading(ui, "STRUCTURE");
+
+    let current_copyright = app.config.folder_mapping.copyright_depth;
+    section_row(ui, true, false, |ui| {
+        ui.vertical(|ui| {
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("Copyright folder level")
+                    .size(12.5)
+                    .color(C_TEXT),
+            );
+            ui.label(
+                RichText::new("Which folder level holds the rights-holder name")
+                    .size(10.5)
+                    .color(C_TEXT_MUTED),
+            );
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(idx) = combo_box(
+                ui,
+                Id::new("combo_copyright"),
+                depth_to_label(current_copyright),
+                DEPTH_OPTIONS,
+                96.0,
+            ) {
+                app.config.folder_mapping.copyright_depth = idx;
+                let _ = app.config.save();
+            }
+        });
+    });
+
+    let current_artist = app.config.folder_mapping.artist_depth;
+    section_row(ui, false, false, |ui| {
+        ui.vertical(|ui| {
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("Artist folder level")
+                    .size(12.5)
+                    .color(C_TEXT),
+            );
+            ui.label(
+                RichText::new("Which folder level holds the creator/artist name")
+                    .size(10.5)
+                    .color(C_TEXT_MUTED),
+            );
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(idx) = combo_box(
+                ui,
+                Id::new("combo_artist"),
+                depth_to_label(current_artist),
+                DEPTH_OPTIONS,
+                96.0,
+            ) {
+                app.config.folder_mapping.artist_depth = idx;
+                let _ = app.config.save();
+            }
+        });
+    });
+
+    let mut sep = app.config.character_separator.clone();
+    section_row(ui, false, false, |ui| {
+        ui.vertical(|ui| {
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("Character separator")
+                    .size(12.5)
+                    .color(C_TEXT),
+            );
+            ui.label(
+                RichText::new("Splits filename into character names  (e.g. \" x \")")
+                    .size(10.5)
+                    .color(C_TEXT_MUTED),
+            );
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut sep)
+                    .desired_width(64.0)
+                    .hint_text(" x "),
+            );
+            if resp.lost_focus() && sep != app.config.character_separator {
+                app.config.character_separator = sep;
+                let _ = app.config.save();
+            }
+        });
+    });
+
+    section_row(ui, false, true, |ui| {
+        ui.vertical(|ui| {
+            ui.add_space(12.0);
+            ui.label(RichText::new("Apply changes").size(12.5).color(C_TEXT));
+            ui.label(
+                RichText::new("A rescan is required to repopulate metadata fields")
+                    .size(10.5)
+                    .color(C_TEXT_MUTED),
+            );
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if app.scan_manager.is_scanning {
+                ui.spinner();
+            } else {
+                let en = !app.root_path.is_empty();
+                if pill_button(ui, "Rescan now", en) && en {
+                    *rescan_requested = true;
+                }
+            }
+        });
+    });
+}
+
 fn indexing_section(app: &mut MediaApp, ui: &mut egui::Ui) {
-    let icons = app.icons.as_ref().unwrap();
+    let search_icon = app.icons.as_ref().unwrap().get("search").clone();
+    let lightning_icon = app.icons.as_ref().unwrap().get("lightning").clone();
     section_heading(ui, "INDEXING");
 
     section_row(ui, true, false, |ui| {
-        icon(ui, icons.get("search"), 16.0);
+        icon(ui, &search_icon, 16.0);
         ui.add_space(10.0);
         ui.vertical(|ui| {
             ui.add_space(12.0);
@@ -115,14 +236,14 @@ fn indexing_section(app: &mut MediaApp, ui: &mut egui::Ui) {
             } else {
                 let en = !app.root_path.is_empty();
                 if pill_button(ui, "Scan now", en) && en {
-                    app.scan_manager.start(app.root_path.clone());
+                    app.rescan();
                 }
             }
         });
     });
 
     section_row(ui, false, true, |ui| {
-        icon(ui, icons.get("lightning"), 16.0);
+        icon(ui, &lightning_icon, 16.0);
         ui.add_space(10.0);
         ui.vertical(|ui| {
             ui.add_space(12.0);
@@ -220,6 +341,7 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
     let ctx = ui.ctx();
     let screen = ctx.content_rect();
     let mut close = false;
+    let mut rescan_requested = false;
 
     egui::Area::new(Id::new("settings_backdrop"))
         .fixed_pos(Pos2::ZERO)
@@ -298,12 +420,12 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
             ui.painter().rect_filled(sep, 0.0, BORDER);
 
             Frame::NONE
-                .fill(CARD_BG)
                 .inner_margin(Margin::symmetric(18, 4))
                 .show(ui, |ui| {
                     ui.set_width(MODAL_W - 36.0);
 
                     library_section(app, ui);
+                    structure_section(app, ui, &mut rescan_requested);
                     indexing_section(app, ui);
                     cache_section(app, ui);
 
@@ -326,6 +448,10 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
                     ui.add_space(12.0);
                 });
         });
+
+    if rescan_requested {
+        app.rescan();
+    }
 
     if close {
         app.settings_open = None;

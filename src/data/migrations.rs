@@ -168,4 +168,114 @@ pub fn run_migrations(tx: &Transaction) {
         version = 6;
         set_version(tx, version);
     }
+
+    // === MIGRATION 7 ===
+    if version < 7 {
+        tx.execute("ALTER TABLE media RENAME COLUMN category TO copyright", [])
+            .unwrap();
+        tx.execute("ALTER TABLE media RENAME COLUMN author TO artist", [])
+            .unwrap();
+
+        tx.execute("DROP INDEX IF EXISTS idx_category", []).unwrap();
+        tx.execute("DROP INDEX IF EXISTS idx_author", []).unwrap();
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_copyright ON media(copyright)",
+            [],
+        )
+        .unwrap();
+        tx.execute("CREATE INDEX IF NOT EXISTS idx_artist ON media(artist)", [])
+            .unwrap();
+
+        tx.execute(
+            "ALTER TABLE media ADD COLUMN characters TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .unwrap();
+        tx.execute(
+            "ALTER TABLE media ADD COLUMN tags TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .unwrap();
+
+        tx.execute("DROP TRIGGER IF EXISTS trg_media_ai", [])
+            .unwrap();
+        tx.execute("DROP TRIGGER IF EXISTS trg_media_ad", [])
+            .unwrap();
+        tx.execute("DROP TRIGGER IF EXISTS trg_media_au", [])
+            .unwrap();
+        tx.execute("DROP TABLE IF EXISTS media_fts", []).unwrap();
+
+        tx.execute(
+            "CREATE VIRTUAL TABLE media_fts USING fts5(
+                path,
+                name,
+                copyright,
+                artist,
+                characters,
+                tags
+            )",
+            [],
+        )
+        .unwrap();
+
+        tx.execute(
+            "CREATE TRIGGER trg_media_ai AFTER INSERT ON media BEGIN
+                INSERT INTO media_fts(rowid, path, name, copyright, artist, characters, tags)
+                VALUES (
+                    new.rowid,
+                    new.path,
+                    new.name,
+                    new.copyright,
+                    new.artist,
+                    replace(new.characters, '|', ' '),
+                    replace(new.tags,       '|', ' ')
+                );
+             END;",
+            [],
+        )
+        .unwrap();
+
+        tx.execute(
+            "CREATE TRIGGER trg_media_ad AFTER DELETE ON media BEGIN
+                DELETE FROM media_fts WHERE rowid = old.rowid;
+             END;",
+            [],
+        )
+        .unwrap();
+
+        tx.execute(
+            "CREATE TRIGGER trg_media_au AFTER UPDATE ON media
+             WHEN old.name       != new.name
+               OR old.copyright  != new.copyright
+               OR old.artist     != new.artist
+               OR old.path       != new.path
+               OR old.characters != new.characters
+               OR old.tags       != new.tags
+             BEGIN
+                 DELETE FROM media_fts WHERE rowid = old.rowid;
+                 INSERT INTO media_fts(rowid, path, name, copyright, artist, characters, tags)
+                 VALUES (
+                     new.rowid,
+                     new.path,
+                     new.name,
+                     new.copyright,
+                     new.artist,
+                     replace(new.characters, '|', ' '),
+                     replace(new.tags,       '|', ' ')
+                 );
+             END;",
+            [],
+        )
+        .unwrap();
+
+        tx.execute(
+            "INSERT INTO media_fts(rowid, path, name, copyright, artist, characters, tags)
+             SELECT rowid, path, name, copyright, artist, '', '' FROM media",
+            [],
+        )
+        .unwrap();
+
+        version = 7;
+        set_version(tx, version);
+    }
 }

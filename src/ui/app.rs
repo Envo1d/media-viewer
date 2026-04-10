@@ -56,6 +56,10 @@ pub struct MediaApp {
     is_loading_more: bool,
 
     pub app_icon: Option<TextureHandle>,
+
+    pub tag_modal_item: Option<Arc<MediaItem>>,
+    pub tag_modal_tags: Vec<String>,
+    pub tag_modal_input: String,
 }
 
 impl MediaApp {
@@ -74,7 +78,6 @@ impl MediaApp {
 
         let cache_dir = AppConfig::get_cache_dir();
         let _ = fs::create_dir_all(&cache_dir);
-
         cache::prune_cache_async(cache_dir, 500);
 
         let app_icon = {
@@ -115,19 +118,64 @@ impl MediaApp {
             is_loading_more: false,
             icons: Some(IconRegistry::new(&cc.egui_ctx)),
             show_previews: true,
+            tag_modal_item: None,
+            tag_modal_tags: Vec::new(),
+            tag_modal_input: String::new(),
         };
 
         app.refresh_items();
 
         if !root_path.is_empty() {
+            let mapping = config.folder_mapping.clone();
+            let char_sep = config.character_separator.clone();
+
             if config.auto_scan {
-                app.scan_manager.start(root_path);
+                app.scan_manager.start(root_path, mapping, char_sep);
             } else {
-                app.scan_manager.start_watching(root_path);
+                app.scan_manager
+                    .start_watching(root_path, mapping, char_sep);
             }
         }
 
         app
+    }
+
+    pub fn open_tag_modal(&mut self, item: Arc<MediaItem>) {
+        self.tag_modal_tags = item.tags.clone();
+        self.tag_modal_input = String::new();
+        self.tag_modal_item = Some(item);
+    }
+
+    pub fn save_tags(&mut self) {
+        let Some(item) = self.tag_modal_item.take() else {
+            return;
+        };
+        let new_tags = std::mem::take(&mut self.tag_modal_tags);
+        DbService::update_tags(item.path.clone(), new_tags.clone());
+        self.apply_tag_update(&item.path, new_tags);
+        self.tag_modal_input.clear();
+    }
+
+    fn apply_tag_update(&mut self, path: &str, tags: Vec<String>) {
+        for arc in &mut self.displayed_items {
+            if arc.path == path {
+                let mut updated = (**arc).clone();
+                updated.tags = tags;
+                *arc = Arc::new(updated);
+                return;
+            }
+        }
+    }
+
+    pub fn rescan(&mut self) {
+        if self.root_path.is_empty() {
+            return;
+        }
+
+        let mapping = self.config.folder_mapping.clone();
+        let char_sep = self.config.character_separator.clone();
+        self.scan_manager
+            .start(self.root_path.clone(), mapping, char_sep);
     }
 
     fn handle_scan_and_watch_events(&mut self, ctx: &Context) {
@@ -300,6 +348,7 @@ impl eframe::App for MediaApp {
                     });
 
                 components::settings_modal(self, ui);
+                components::tag_modal(self, ui);
 
                 egui::CentralPanel::default().show_inside(ui, |ui| {
                     components::grid_layout(self, ui);

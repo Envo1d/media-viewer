@@ -8,6 +8,7 @@ use egui::{
     Align2, Color32, CornerRadius, FontId, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui,
     Vec2,
 };
+use std::sync::Arc;
 
 const CR: u8 = 8;
 const INFO_H: f32 = 30.0;
@@ -29,12 +30,26 @@ fn render_placeholder(painter: &egui::Painter, rect: Rect, item: &MediaItem) {
     );
 }
 
+fn hover_meta(item: &MediaItem) -> String {
+    if !item.characters.is_empty() {
+        const MAX: usize = 3;
+        let shown = &item.characters[..item.characters.len().min(MAX)];
+        let mut s = shown.join(" · ");
+        if item.characters.len() > MAX {
+            s.push_str(&format!(" +{}", item.characters.len() - MAX));
+        }
+        return s;
+    }
+    format!("{} · {}", item.copyright, item.artist)
+}
+
 pub fn media_card(
     ui: &mut Ui,
-    item: &MediaItem,
+    item: &Arc<MediaItem>,
     texture_manager: &mut TextureManager,
     size: f32,
     show_texture: bool,
+    tag_target: &mut Option<Arc<MediaItem>>,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
 
@@ -50,6 +65,13 @@ pub fn media_card(
             let _ = std::process::Command::new("explorer")
                 .args(["/select,", &item.path])
                 .spawn();
+            ui.close();
+        }
+
+        ui.separator();
+
+        if ui.button("  Edit tags").clicked() {
+            *tag_target = Some(Arc::clone(item));
             ui.close();
         }
 
@@ -128,7 +150,7 @@ pub fn media_card(
     if is_hovered {
         inner.rect_filled(img_area, 0.0, HOVER_TINT);
 
-        let meta = format!("{} · {}", item.category, item.author);
+        let meta = hover_meta(item);
         let meta_sz = (size * 0.051).clamp(9.0, 11.5);
         let max_meta = ((size * 0.80 / (meta_sz * 0.55)) as usize).max(6);
         let tag_y = img_area.max.y - 6.0;

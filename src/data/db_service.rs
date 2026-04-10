@@ -61,4 +61,13 @@ impl DbService {
 
         (id, rx)
     }
+
+    pub fn update_tags(path: String, tags: Vec<String>) {
+        get_db()
+            .send(DbCommand::UpdateTags {
+                path,
+                tags: tags.join("|"),
+            })
+            .ok();
+    }
 }

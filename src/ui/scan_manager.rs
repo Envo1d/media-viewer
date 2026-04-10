@@ -2,6 +2,7 @@ use crate::core::models::{ScanEvent, WatchEvent};
 use crate::core::scanner::MediaScanner;
 use crate::core::watcher::FileWatcher;
 use crate::data::db_worker::get_db;
+use crate::infra::config::FolderMapping;
 use crossbeam_channel::{bounded, Receiver};
 
 const MAX_SCAN_EVENTS_PER_FRAME: usize = 32;
@@ -15,6 +16,9 @@ pub struct ScanManager {
 
     watcher: Option<FileWatcher>,
     watched_path: Option<String>,
+
+    pending_mapping: Option<FolderMapping>,
+    pending_char_sep: Option<String>,
 }
 
 impl ScanManager {
@@ -25,31 +29,35 @@ impl ScanManager {
             scan_rx: None,
             watcher: None,
             watched_path: None,
+            pending_mapping: None,
+            pending_char_sep: None,
         }
     }
 
-    pub fn start(&mut self, root_path: String) {
+    pub fn start(&mut self, root_path: String, mapping: FolderMapping, char_sep: String) {
         if self.is_scanning || root_path.is_empty() {
             return;
         }
 
         self.watcher = None;
         self.watched_path = Some(root_path.clone());
+        self.pending_mapping = Some(mapping.clone());
+        self.pending_char_sep = Some(char_sep.clone());
 
         let (tx, rx) = bounded(SCAN_EVENT_CAPACITY);
         self.scan_rx = Some(rx);
         self.is_scanning = true;
         self.files_scanned = 0;
 
-        MediaScanner::start(root_path, tx, get_db().clone());
+        MediaScanner::start(root_path, mapping, char_sep, tx, get_db().clone());
     }
 
-    pub fn start_watching(&mut self, root_path: String) {
+    pub fn start_watching(&mut self, root_path: String, mapping: FolderMapping, char_sep: String) {
         if root_path.is_empty() || self.watcher.is_some() {
             return;
         }
         self.watched_path = Some(root_path.clone());
-        self.watcher = FileWatcher::start(root_path);
+        self.watcher = FileWatcher::start(root_path, mapping, char_sep);
     }
 
     fn drain_scan_events(&mut self) -> bool {
@@ -58,12 +66,8 @@ impl ScanManager {
         if let Some(rx) = &self.scan_rx {
             for event in rx.try_iter().take(MAX_SCAN_EVENTS_PER_FRAME) {
                 match event {
-                    ScanEvent::Progress(n) => {
-                        self.files_scanned += n;
-                    }
-                    ScanEvent::Finished => {
-                        finished = true;
-                    }
+                    ScanEvent::Progress(n) => self.files_scanned += n,
+                    ScanEvent::Finished => finished = true,
                 }
             }
         }
@@ -72,8 +76,12 @@ impl ScanManager {
             self.is_scanning = false;
             self.scan_rx = None;
 
-            if let Some(path) = self.watched_path.clone() {
-                self.watcher = FileWatcher::start(path);
+            if let (Some(path), Some(mapping), Some(char_sep)) = (
+                self.watched_path.clone(),
+                self.pending_mapping.take(),
+                self.pending_char_sep.take(),
+            ) {
+                self.watcher = FileWatcher::start(path, mapping, char_sep);
             }
         }
 

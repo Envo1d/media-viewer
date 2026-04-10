@@ -1,4 +1,5 @@
 use crate::core::models::{DbCommand, MediaItem, ScanEvent};
+use crate::infra::config::FolderMapping;
 use crate::utils::{build_media_item, current_timestamp};
 use crossbeam_channel::{bounded, Sender};
 use ignore::WalkBuilder;
@@ -12,7 +13,13 @@ const MAX_WALKER_THREADS: usize = 4;
 pub struct MediaScanner;
 
 impl MediaScanner {
-    fn run(root_path: String, ui_tx: Sender<ScanEvent>, db_tx: Sender<DbCommand>) {
+    fn run(
+        root_path: String,
+        mapping: FolderMapping,
+        char_sep: String,
+        ui_tx: Sender<ScanEvent>,
+        db_tx: Sender<DbCommand>,
+    ) {
         let scan_id = current_timestamp();
 
         let (item_tx, item_rx) = bounded::<Arc<MediaItem>>(WALKER_QUEUE);
@@ -51,6 +58,8 @@ impl MediaScanner {
             .expect("Failed to spawn scan aggregator thread");
 
         let root = Arc::new(root_path);
+        let mapping = Arc::new(mapping);
+        let char_sep = Arc::new(char_sep);
 
         let walker_threads = num_cpus::get().clamp(1, MAX_WALKER_THREADS);
 
@@ -62,10 +71,14 @@ impl MediaScanner {
             .run(|| {
                 let tx = item_tx.clone();
                 let root = root.clone();
+                let mapping = mapping.clone();
+                let char_sep = char_sep.clone();
 
                 Box::new(move |result| {
                     if let Ok(entry) = result {
-                        if let Some(item) = build_media_item(&root, entry.path()) {
+                        if let Some(item) =
+                            build_media_item(&root, entry.path(), &mapping, &char_sep)
+                        {
                             tx.send(item).ok();
                         }
                     }
@@ -79,10 +92,16 @@ impl MediaScanner {
         ui_tx.send(ScanEvent::Finished).ok();
     }
 
-    pub fn start(root_path: String, ui_tx: Sender<ScanEvent>, db_tx: Sender<DbCommand>) {
+    pub fn start(
+        root_path: String,
+        mapping: FolderMapping,
+        char_sep: String,
+        ui_tx: Sender<ScanEvent>,
+        db_tx: Sender<DbCommand>,
+    ) {
         thread::Builder::new()
             .name("nexa-scanner".into())
-            .spawn(move || Self::run(root_path, ui_tx, db_tx))
+            .spawn(move || Self::run(root_path, mapping, char_sep, ui_tx, db_tx))
             .expect("Failed to spawn scanner thread");
     }
 }

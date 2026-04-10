@@ -25,6 +25,9 @@ fn start_db_worker() -> Sender<DbCommand> {
                         DbCommand::DeleteByPath(path) => {
                             db.delete_by_path(&path);
                         }
+                        DbCommand::UpdateTags { path, tags } => {
+                            db.update_tags(&path, &tags);
+                        }
                         DbCommand::Query {
                             id,
                             limit,

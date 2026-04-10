@@ -4,6 +4,31 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct FolderMapping {
+    pub copyright_depth: usize,
+    pub artist_depth: usize,
+}
+
+impl Default for FolderMapping {
+    fn default() -> Self {
+        Self {
+            copyright_depth: 0,
+            artist_depth: 1,
+        }
+    }
+}
+
+impl FolderMapping {
+    pub fn min_folder_depth(&self) -> usize {
+        self.copyright_depth.max(self.artist_depth) + 1
+    }
+}
+
+fn default_char_sep() -> String {
+    " x ".to_owned()
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppConfig {
     pub library_path: Option<PathBuf>,
@@ -12,6 +37,10 @@ pub struct AppConfig {
     pub cache_path: PathBuf,
     #[serde(default)]
     pub auto_scan: bool,
+    #[serde(default)]
+    pub folder_mapping: FolderMapping,
+    #[serde(default = "default_char_sep")]
+    pub character_separator: String,
 }
 
 impl Default for AppConfig {
@@ -22,6 +51,8 @@ impl Default for AppConfig {
             cache_path: Self::get_cache_dir(),
             last_scan_date: None,
             auto_scan: false,
+            folder_mapping: FolderMapping::default(),
+            character_separator: default_char_sep(),
         }
     }
 }

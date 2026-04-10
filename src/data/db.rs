@@ -5,6 +5,10 @@ use crate::utils::{build_search_query, map_media_item};
 use rusqlite::Connection;
 use std::sync::Arc;
 
+const SELECT_COLS: &str = "path, name, copyright, artist, media_type, modified, characters, tags";
+const SELECT_COLS_FTS: &str =
+    "m.path, m.name, m.copyright, m.artist, m.media_type, m.modified, m.characters, m.tags";
+
 pub struct Database {
     conn: Connection,
 }
@@ -15,12 +19,12 @@ impl Database {
         let mut conn = Connection::open(path).expect("Cannot open SQLite database");
 
         conn.execute_batch(
-            "PRAGMA journal_mode    = WAL;
-             PRAGMA synchronous     = NORMAL;
-             PRAGMA cache_size      = -65536;
-             PRAGMA temp_store      = MEMORY;
-             PRAGMA mmap_size       = 268435456;
-             PRAGMA wal_autocheckpoint = 1000;",
+            "PRAGMA journal_mode        = WAL;
+             PRAGMA synchronous         = NORMAL;
+             PRAGMA cache_size          = -65536;
+             PRAGMA temp_store          = MEMORY;
+             PRAGMA mmap_size           = 268435456;
+             PRAGMA wal_autocheckpoint  = 1000;",
         )
         .expect("Failed to configure SQLite pragmas");
 
@@ -47,7 +51,7 @@ impl Database {
             let mut touch = match tx.prepare_cached(
                 "UPDATE media
                     SET last_seen_scan = ?3
-                  WHERE path = ?1
+                  WHERE path     = ?1
                     AND modified = ?2",
             ) {
                 Ok(s) => s,
@@ -59,15 +63,17 @@ impl Database {
 
             let mut upsert = match tx.prepare_cached(
                 "INSERT INTO media
-                    (path, name, category, author, media_type, modified, last_seen_scan)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    (path, name, copyright, artist, media_type,
+                     modified, last_seen_scan, characters, tags)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '')
                  ON CONFLICT(path) DO UPDATE SET
                     name           = excluded.name,
-                    category       = excluded.category,
-                    author         = excluded.author,
+                    copyright      = excluded.copyright,
+                    artist         = excluded.artist,
                     media_type     = excluded.media_type,
                     modified       = excluded.modified,
-                    last_seen_scan = excluded.last_seen_scan",
+                    last_seen_scan = excluded.last_seen_scan,
+                    characters     = excluded.characters",
             ) {
                 Ok(s) => s,
                 Err(e) => {
@@ -86,11 +92,12 @@ impl Database {
                         .execute(rusqlite::params![
                             item.path,
                             item.name,
-                            item.category,
-                            item.author,
+                            item.copyright,
+                            item.artist,
                             item.media_type.as_str(),
                             item.modified,
                             scan_id,
+                            item.characters_db(),
                         ])
                         .ok();
                 }
@@ -102,6 +109,15 @@ impl Database {
         }
     }
 
+    pub fn update_tags(&self, path: &str, tags: &str) {
+        if let Err(e) = self.conn.execute(
+            "UPDATE media SET tags = ?2 WHERE path = ?1",
+            rusqlite::params![path, tags],
+        ) {
+            eprintln!("update_tags error: {e}");
+        }
+    }
+
     pub fn query(
         &self,
         limit: usize,
@@ -110,11 +126,12 @@ impl Database {
         sort: &SortOrder,
     ) -> Vec<MediaItem> {
         let sql = format!(
-            "SELECT path, name, category, author, media_type, modified
+            "SELECT {cols}
                FROM media
               WHERE 1=1 {filter}
               {sort}
               LIMIT ?1 OFFSET ?2",
+            cols = SELECT_COLS,
             filter = filter.to_sql(),
             sort = sort.to_sql(),
         );
@@ -152,12 +169,13 @@ impl Database {
         }
 
         let sql = format!(
-            "SELECT m.path, m.name, m.category, m.author, m.media_type, m.modified
+            "SELECT {cols}
                FROM media m
                JOIN media_fts ON m.rowid = media_fts.rowid
               WHERE media_fts MATCH ?1 {filter}
               {sort}
               LIMIT ?2 OFFSET ?3",
+            cols = SELECT_COLS_FTS,
             filter = filter.to_sql_fts(),
             sort = sort.to_sql_fts(),
         );

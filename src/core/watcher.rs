@@ -1,5 +1,6 @@
 use crate::core::models::{DbCommand, MediaItem, PendingKind, WatchEvent};
 use crate::data::db_worker::get_db;
+use crate::infra::config::FolderMapping;
 use crate::utils::is_media_path;
 use crate::utils::{build_media_item, current_timestamp};
 use crossbeam_channel::{bounded, Receiver, Sender};
@@ -22,6 +23,8 @@ fn flush_ready(
     db_tx: &Sender<DbCommand>,
     watch_tx: &Sender<WatchEvent>,
     root: &str,
+    mapping: &FolderMapping,
+    char_sep: &str,
     debounce: Duration,
 ) {
     if pending.is_empty() {
@@ -48,7 +51,7 @@ fn flush_ready(
                 }
             }
             PendingKind::Upsert => {
-                if let Some(item) = build_media_item(root, path) {
+                if let Some(item) = build_media_item(root, path, mapping, char_sep) {
                     upserts.push(item);
                     changed = true;
                 }
@@ -72,6 +75,8 @@ fn debounce_loop(
     db_tx: Sender<DbCommand>,
     watch_tx: Sender<WatchEvent>,
     root: String,
+    mapping: FolderMapping,
+    char_sep: String,
 ) {
     let mut pending: HashMap<PathBuf, (PendingKind, Instant)> = HashMap::new();
     let debounce = Duration::from_millis(DEBOUNCE_MS);
@@ -84,7 +89,15 @@ fn debounce_loop(
                     EventKind::Remove(_) => PendingKind::Delete,
                     EventKind::Create(_) | EventKind::Modify(_) => PendingKind::Upsert,
                     _ => {
-                        flush_ready(&mut pending, &db_tx, &watch_tx, &root, debounce);
+                        flush_ready(
+                            &mut pending,
+                            &db_tx,
+                            &watch_tx,
+                            &root,
+                            &mapping,
+                            &char_sep,
+                            debounce,
+                        );
                         continue;
                     }
                 };
@@ -101,12 +114,20 @@ fn debounce_loop(
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }
 
-        flush_ready(&mut pending, &db_tx, &watch_tx, &root, debounce);
+        flush_ready(
+            &mut pending,
+            &db_tx,
+            &watch_tx,
+            &root,
+            &mapping,
+            &char_sep,
+            debounce,
+        );
     }
 }
 
 impl FileWatcher {
-    pub fn start(root_path: String) -> Option<Self> {
+    pub fn start(root_path: String, mapping: FolderMapping, char_sep: String) -> Option<Self> {
         let (raw_tx, raw_rx) = bounded::<notify::Result<Event>>(1024);
         let (watch_tx, watch_rx) = bounded::<WatchEvent>(32);
 
@@ -130,7 +151,7 @@ impl FileWatcher {
 
         thread::Builder::new()
             .name("nexa-watcher-debounce".into())
-            .spawn(move || debounce_loop(raw_rx, db_tx, watch_tx_bg, root))
+            .spawn(move || debounce_loop(raw_rx, db_tx, watch_tx_bg, root, mapping, char_sep))
             .ok()?;
 
         eprintln!("[watcher] watching: {root_path}");

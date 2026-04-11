@@ -1,4 +1,4 @@
-use crate::core::models::{MediaFilter, MediaItem, SortOrder};
+use crate::core::models::{FieldFilter, LibraryStats, MediaFilter, MediaItem, SortOrder};
 use crate::data::db_service::DbService;
 use crate::data::db_worker::init_db;
 use crate::infra::cache;
@@ -27,6 +27,7 @@ pub struct MediaApp {
     pub config: AppConfig,
     pub texture_manager: TextureManager,
     pub icons: Option<IconRegistry>,
+    pub app_icon: Option<TextureHandle>,
 
     // UI state
     pub search_input: String,
@@ -39,27 +40,36 @@ pub struct MediaApp {
     pub card_size: f32,
     pub show_previews: bool,
 
+    // Active quick-filter from sidebar stats (artist / copyright / tag).
+    // Cleared whenever the user changes search_input or media type filter.
+    pub field_filter: Option<FieldFilter>,
+
     // Data
     pub scan_manager: ScanManager,
     pub displayed_items: Vec<Arc<MediaItem>>,
+
+    // Sidebar statistics
+    pub sidebar_stats: LibraryStats,
+    stats_rx: Option<Receiver<LibraryStats>>,
 
     // Query machinery
     pending_queries: Vec<(u64, u64, Receiver<(u64, Vec<Arc<MediaItem>>)>)>,
     current_query_id: u64,
 
+    // Pagination & search
     pub last_input_time: Instant,
     debounce_delay: Duration,
     last_search_input: String,
-
     page: usize,
     has_more: bool,
     is_loading_more: bool,
 
-    pub app_icon: Option<TextureHandle>,
-
-    pub tag_modal_item: Option<Arc<MediaItem>>,
-    pub tag_modal_tags: Vec<String>,
-    pub tag_modal_input: String,
+    // Metadata-editor modal state
+    pub metadata_modal_item: Option<Arc<MediaItem>>,
+    pub metadata_modal_chars: Vec<String>,
+    pub metadata_modal_chars_input: String,
+    pub metadata_modal_tags: Vec<String>,
+    pub metadata_modal_input: String,
 }
 
 impl MediaApp {
@@ -108,6 +118,9 @@ impl MediaApp {
             sort: SortOrder::NameAsc,
             card_size: 200.0,
             app_icon,
+            field_filter: None,
+            sidebar_stats: LibraryStats::default(),
+            stats_rx: None,
             pending_queries: Vec::new(),
             current_query_id: 0,
             last_input_time: Instant::now(),
@@ -118,17 +131,19 @@ impl MediaApp {
             is_loading_more: false,
             icons: Some(IconRegistry::new(&cc.egui_ctx)),
             show_previews: true,
-            tag_modal_item: None,
-            tag_modal_tags: Vec::new(),
-            tag_modal_input: String::new(),
+            metadata_modal_item: None,
+            metadata_modal_chars: Vec::new(),
+            metadata_modal_chars_input: String::new(),
+            metadata_modal_tags: Vec::new(),
+            metadata_modal_input: String::new(),
         };
 
         app.refresh_items();
+        app.request_stats();
 
         if !root_path.is_empty() {
             let mapping = config.folder_mapping.clone();
             let char_sep = config.character_separator.clone();
-
             if config.auto_scan {
                 app.scan_manager.start(root_path, mapping, char_sep);
             } else {
@@ -140,26 +155,45 @@ impl MediaApp {
         app
     }
 
-    pub fn open_tag_modal(&mut self, item: Arc<MediaItem>) {
-        self.tag_modal_tags = item.tags.clone();
-        self.tag_modal_input = String::new();
-        self.tag_modal_item = Some(item);
+    pub fn toggle_field_filter(&mut self, f: FieldFilter) {
+        if self.field_filter.as_ref() == Some(&f) {
+            self.field_filter = None;
+        } else {
+            self.field_filter = Some(f);
+        }
+        self.texture_manager.invalidate_prefetch();
+        self.refresh_items();
     }
 
-    pub fn save_tags(&mut self) {
-        let Some(item) = self.tag_modal_item.take() else {
+    pub fn open_metadata_modal(&mut self, item: Arc<MediaItem>) {
+        self.metadata_modal_chars = item.characters.clone();
+        self.metadata_modal_chars_input = String::new();
+        self.metadata_modal_tags = item.tags.clone();
+        self.metadata_modal_input = String::new();
+        self.metadata_modal_item = Some(item);
+    }
+
+    pub fn save_metadata(&mut self) {
+        let Some(item) = self.metadata_modal_item.take() else {
             return;
         };
-        let new_tags = std::mem::take(&mut self.tag_modal_tags);
+        let new_chars = std::mem::take(&mut self.metadata_modal_chars);
+        let new_tags = std::mem::take(&mut self.metadata_modal_tags);
+        self.metadata_modal_chars_input.clear();
+        self.metadata_modal_input.clear();
+
+        DbService::update_characters(item.path.clone(), new_chars.clone());
         DbService::update_tags(item.path.clone(), new_tags.clone());
-        self.apply_tag_update(&item.path, new_tags);
-        self.tag_modal_input.clear();
+        self.apply_metadata_update(&item.path, new_chars, new_tags);
+
+        self.request_stats();
     }
 
-    fn apply_tag_update(&mut self, path: &str, tags: Vec<String>) {
+    fn apply_metadata_update(&mut self, path: &str, chars: Vec<String>, tags: Vec<String>) {
         for arc in &mut self.displayed_items {
             if arc.path == path {
                 let mut updated = (**arc).clone();
+                updated.characters = chars;
                 updated.tags = tags;
                 *arc = Arc::new(updated);
                 return;
@@ -178,12 +212,32 @@ impl MediaApp {
             .start(self.root_path.clone(), mapping, char_sep);
     }
 
+    fn request_stats(&mut self) {
+        self.stats_rx = Some(DbService::query_stats());
+    }
+
+    fn poll_stats(&mut self, ctx: &Context) {
+        let Some(ref rx) = self.stats_rx else { return };
+        match rx.try_recv() {
+            Ok(stats) => {
+                self.sidebar_stats = stats;
+                self.stats_rx = None;
+                ctx.request_repaint();
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => {}
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                self.stats_rx = None;
+            }
+        }
+    }
+
     fn handle_scan_and_watch_events(&mut self, ctx: &Context) {
         let (scan_finished, watch_changed) = self.scan_manager.update();
 
         if scan_finished || watch_changed {
             self.texture_manager.invalidate_prefetch();
             self.refresh_items();
+            self.request_stats();
             ctx.request_repaint();
         }
     }
@@ -193,8 +247,10 @@ impl MediaApp {
             return;
         }
 
+        let ff = self.field_filter.clone();
+
         let (id, rx) = if self.search_input.trim().is_empty() {
-            DbService::query(PAGE_SIZE, 0, self.filter.clone(), self.sort.clone())
+            DbService::query(PAGE_SIZE, 0, self.filter.clone(), self.sort.clone(), ff)
         } else {
             DbService::search(
                 self.search_input.clone(),
@@ -202,6 +258,7 @@ impl MediaApp {
                 0,
                 self.filter.clone(),
                 self.sort.clone(),
+                ff,
             )
         };
 
@@ -247,9 +304,16 @@ impl MediaApp {
 
         let offset = self.page * PAGE_SIZE;
         let snapshot = self.current_query_id;
+        let ff = self.field_filter.clone();
 
         let (db_id, rx) = if self.search_input.trim().is_empty() {
-            DbService::query(PAGE_SIZE, offset, self.filter.clone(), self.sort.clone())
+            DbService::query(
+                PAGE_SIZE,
+                offset,
+                self.filter.clone(),
+                self.sort.clone(),
+                ff,
+            )
         } else {
             DbService::search(
                 self.search_input.clone(),
@@ -257,6 +321,7 @@ impl MediaApp {
                 offset,
                 self.filter.clone(),
                 self.sort.clone(),
+                ff,
             )
         };
 
@@ -317,6 +382,7 @@ impl eframe::App for MediaApp {
         let ctx = ui.ctx().clone();
 
         self.poll_db(&ctx);
+        self.poll_stats(&ctx);
         self.handle_search_input(&ctx);
         self.texture_manager.update(&ctx);
         self.handle_scan_and_watch_events(&ctx);
@@ -348,7 +414,7 @@ impl eframe::App for MediaApp {
                     });
 
                 components::settings_modal(self, ui);
-                components::tag_modal(self, ui);
+                components::metadata_modal(self, ui);
 
                 egui::CentralPanel::default().show_inside(ui, |ui| {
                     components::grid_layout(self, ui);

@@ -1,9 +1,11 @@
 use crate::ui::app::MediaApp;
-use crate::ui::colors::{C_INPUT_BG, C_TEXT};
-use egui::{CornerRadius, Frame, Margin};
+use crate::ui::colors::{C_INPUT_BG, C_TEXT, C_TEXT_MUTED};
+use egui::{CornerRadius, CursorIcon, Frame, Margin, Sense, Vec2};
 use std::time::Instant;
 
 pub fn search_input(app: &mut MediaApp, ui: &mut egui::Ui) {
+    let close_icon = app.icons.as_ref().unwrap().get("close").clone();
+
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), 68.0),
         egui::Layout::top_down(egui::Align::Min),
@@ -21,7 +23,7 @@ pub fn search_input(app: &mut MediaApp, ui: &mut egui::Ui) {
                 })
                 .stroke(ui.ctx().global_style().visuals.window_stroke())
                 .show(ui, |ui| {
-                    let response = ui.add(
+                    let text_resp = ui.add(
                         egui::TextEdit::singleline(&mut app.search_input)
                             .hint_text("Search...")
                             .frame(Frame::NONE)
@@ -29,8 +31,58 @@ pub fn search_input(app: &mut MediaApp, ui: &mut egui::Ui) {
                             .text_color(C_TEXT),
                     );
 
-                    if response.changed() {
+                    if text_resp.changed() {
                         app.last_input_time = Instant::now();
+                    }
+
+                    let visible = !app.search_input.is_empty();
+
+                    if visible {
+                        let btn_size = 18.0;
+
+                        let rect = text_resp.rect;
+                        let btn_rect = egui::Rect::from_center_size(
+                            egui::pos2(rect.max.x - btn_size * 0.6, rect.center().y),
+                            Vec2::splat(btn_size),
+                        );
+
+                        let resp = ui.interact(btn_rect, ui.id().with("clear_btn"), Sense::click());
+
+                        if resp.hovered() {
+                            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                        }
+
+                        if ui.is_rect_visible(btn_rect) {
+                            if resp.hovered() {
+                                ui.painter().circle_filled(
+                                    btn_rect.center(),
+                                    9.0,
+                                    egui::Color32::from_rgba_premultiplied(255, 255, 255, 18),
+                                );
+                            }
+
+                            let tint = if resp.hovered() { C_TEXT } else { C_TEXT_MUTED };
+
+                            let icon_rect =
+                                egui::Rect::from_center_size(btn_rect.center(), Vec2::splat(12.0));
+
+                            ui.painter().image(
+                                close_icon.id(),
+                                icon_rect,
+                                egui::Rect::from_min_max(
+                                    egui::Pos2::ZERO,
+                                    egui::Pos2::new(1.0, 1.0),
+                                ),
+                                tint,
+                            );
+                        }
+
+                        if resp.clicked() {
+                            app.search_input.clear();
+                            app.last_input_time = Instant::now();
+                            app.field_filter = None;
+                            app.refresh_items();
+                        }
                     }
                 });
 

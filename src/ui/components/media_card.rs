@@ -49,7 +49,7 @@ pub fn media_card(
     texture_manager: &mut TextureManager,
     size: f32,
     show_texture: bool,
-    tag_target: &mut Option<Arc<MediaItem>>,
+    edit_target: &mut Option<Arc<MediaItem>>,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
 
@@ -70,8 +70,8 @@ pub fn media_card(
 
         ui.separator();
 
-        if ui.button("  Edit tags").clicked() {
-            *tag_target = Some(Arc::clone(item));
+        if ui.button("  Edit metadata").clicked() {
+            *edit_target = Some(Arc::clone(item));
             ui.close();
         }
 
@@ -136,6 +136,7 @@ pub fn media_card(
 
         let ts = cr * 0.42;
         let xoff = ts * 0.12;
+
         inner.add(egui::Shape::convex_polygon(
             vec![
                 Pos2::new(cc.x - ts * 0.5 + xoff, cc.y - ts),

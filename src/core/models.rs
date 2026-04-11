@@ -61,22 +61,77 @@ impl SortOrder {
     }
 }
 
+// Field filter
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum FieldFilter {
+    Artist(String),
+    Copyright(String),
+    Tag(String),
+}
+
+impl FieldFilter {
+    pub fn to_where_sql(&self) -> &'static str {
+        match self {
+            Self::Artist(_) => "AND artist = ?",
+            Self::Copyright(_) => "AND copyright = ?",
+            Self::Tag(_) => "AND ('|' || tags || '|') LIKE ?",
+        }
+    }
+
+    pub fn to_where_sql_fts(&self) -> &'static str {
+        match self {
+            Self::Artist(_) => "AND m.artist = ?",
+            Self::Copyright(_) => "AND m.copyright = ?",
+            Self::Tag(_) => "AND ('|' || m.tags || '|') LIKE ?",
+        }
+    }
+
+    pub fn param_value(&self) -> String {
+        match self {
+            Self::Artist(v) | Self::Copyright(v) => v.clone(),
+            Self::Tag(v) => format!("%|{}|%", v),
+        }
+    }
+}
+
+// Sidebar statistics
+
+#[derive(Default, Clone)]
+pub struct LibraryStats {
+    pub top_artists: Vec<(String, u32)>,
+    pub top_copyrights: Vec<(String, u32)>,
+    pub top_tags: Vec<(String, u32)>,
+}
+
 // Domain types
 
 pub enum DbCommand {
     UpsertBatch(Vec<Arc<MediaItem>>, i64),
     DeleteNotSeen(i64),
     DeleteByPath(String),
+
     UpdateTags {
         path: String,
         tags: String,
     },
+
+    UpdateCharacters {
+        path: String,
+        characters: String,
+    },
+
+    QueryStats {
+        resp: Sender<LibraryStats>,
+    },
+
     Query {
         id: u64,
         limit: usize,
         offset: usize,
         filter: MediaFilter,
         sort: SortOrder,
+        field_filter: Option<FieldFilter>,
         resp: Sender<(u64, Vec<Arc<MediaItem>>)>,
     },
     Search {
@@ -86,6 +141,7 @@ pub enum DbCommand {
         offset: usize,
         filter: MediaFilter,
         sort: SortOrder,
+        field_filter: Option<FieldFilter>,
         resp: Sender<(u64, Vec<Arc<MediaItem>>)>,
     },
 }

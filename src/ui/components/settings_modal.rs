@@ -268,6 +268,34 @@ fn indexing_section(app: &mut MediaApp, ui: &mut egui::Ui) {
     });
 }
 
+fn appearance_section(app: &mut MediaApp, ui: &mut egui::Ui) {
+    section_heading(ui, "APPEARANCE");
+
+    section_row(ui, true, true, |ui| {
+        ui.vertical(|ui| {
+            ui.add_space(12.0);
+            ui.label(RichText::new("Card size").size(12.5).color(C_TEXT));
+            ui.label(
+                RichText::new(format!("{}px", app.card_size as u32))
+                    .size(10.5)
+                    .color(C_TEXT_MUTED),
+            );
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(4.0);
+            ui.label(RichText::new("L").size(11.0).color(C_TEXT_MUTED));
+            ui.add_space(4.0);
+            ui.add(
+                egui::Slider::new(&mut app.card_size, 120.0..=320.0)
+                    .show_value(false)
+                    .step_by(10.0),
+            );
+            ui.add_space(4.0);
+            ui.label(RichText::new("S").size(11.0).color(C_TEXT_MUTED));
+        });
+    });
+}
+
 fn cache_section(app: &mut MediaApp, ui: &mut egui::Ui) {
     let icons = app.icons.as_ref().unwrap();
     let cache_dir = AppConfig::get_cache_dir();
@@ -427,6 +455,7 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
                     library_section(app, ui);
                     structure_section(app, ui, &mut rescan_requested);
                     indexing_section(app, ui);
+                    appearance_section(app, ui);
                     cache_section(app, ui);
 
                     ui.add_space(18.0);
@@ -452,7 +481,6 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
     if rescan_requested {
         app.rescan();
     }
-
     if close {
         app.settings_open = None;
     }

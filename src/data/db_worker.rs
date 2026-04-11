@@ -28,15 +28,23 @@ fn start_db_worker() -> Sender<DbCommand> {
                         DbCommand::UpdateTags { path, tags } => {
                             db.update_tags(&path, &tags);
                         }
+                        DbCommand::UpdateCharacters { path, characters } => {
+                            db.update_characters(&path, &characters);
+                        }
+                        DbCommand::QueryStats { resp } => {
+                            let stats = db.query_stats();
+                            let _ = resp.send(stats);
+                        }
                         DbCommand::Query {
                             id,
                             limit,
                             offset,
                             filter,
                             sort,
+                            field_filter,
                             resp,
                         } => {
-                            let items = db.query(limit, offset, &filter, &sort);
+                            let items = db.query(limit, offset, &filter, &sort, &field_filter);
                             let arced: Vec<Arc<_>> = items.into_iter().map(Arc::new).collect();
                             let _ = resp.send((id, arced));
                         }
@@ -47,17 +55,17 @@ fn start_db_worker() -> Sender<DbCommand> {
                             offset,
                             filter,
                             sort,
+                            field_filter,
                             resp,
                         } => {
-                            let items = db.search(&query, limit, offset, &filter, &sort);
+                            let items =
+                                db.search(&query, limit, offset, &filter, &sort, &field_filter);
                             let arced: Vec<Arc<_>> = items.into_iter().map(Arc::new).collect();
                             let _ = resp.send((id, arced));
                         }
                     }))
                 {
                     eprintln!("[db-worker] panic: {:?}", e);
-                    // The resp sender was dropped by the panic so poll_db on
-                    // the UI thread will see Disconnected and reset is_loading_more.
                 }
             }
         })

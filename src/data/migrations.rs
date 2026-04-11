@@ -2,9 +2,7 @@ use rusqlite::Transaction;
 
 pub fn init_schema_version(tx: &Transaction) {
     tx.execute(
-        "CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER NOT NULL
-        )",
+        "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)",
         [],
     )
     .unwrap();
@@ -50,7 +48,6 @@ pub fn run_migrations(tx: &Transaction) {
             [],
         )
         .unwrap();
-
         version = 1;
         set_version(tx, version);
     }
@@ -62,7 +59,6 @@ pub fn run_migrations(tx: &Transaction) {
             [],
         )
         .unwrap();
-
         version = 2;
         set_version(tx, version);
     }
@@ -71,10 +67,8 @@ pub fn run_migrations(tx: &Transaction) {
     if version < 3 {
         tx.execute("CREATE INDEX idx_category ON media(category)", [])
             .unwrap();
-
         tx.execute("CREATE INDEX idx_author ON media(author)", [])
             .unwrap();
-
         version = 3;
         set_version(tx, version);
     }
@@ -82,50 +76,40 @@ pub fn run_migrations(tx: &Transaction) {
     // === MIGRATION 4 ===
     if version < 4 {
         tx.execute(
-            "CREATE VIRTUAL TABLE media_fts USING fts5(
-            path,
-            name,
-            category,
-            author
-        )",
+            "CREATE VIRTUAL TABLE media_fts USING fts5(path, name, category, author)",
             [],
         )
         .unwrap();
-
         tx.execute(
             "CREATE TRIGGER trg_media_ai AFTER INSERT ON media BEGIN
                 INSERT INTO media_fts(rowid, path, name, category, author)
                 VALUES (new.rowid, new.path, new.name, new.category, new.author);
-            END;",
+             END;",
             [],
         )
         .unwrap();
-
         tx.execute(
             "CREATE TRIGGER trg_media_ad AFTER DELETE ON media BEGIN
                 DELETE FROM media_fts WHERE rowid = old.rowid;
-            END;",
+             END;",
             [],
         )
         .unwrap();
-
         tx.execute(
             "CREATE TRIGGER trg_media_au AFTER UPDATE ON media BEGIN
                 DELETE FROM media_fts WHERE rowid = old.rowid;
                 INSERT INTO media_fts(rowid, path, name, category, author)
                 VALUES (new.rowid, new.path, new.name, new.category, new.author);
-            END;",
+             END;",
             [],
         )
         .unwrap();
-
         tx.execute(
             "INSERT INTO media_fts(rowid, path, name, category, author)
-                SELECT rowid, path, name, category, author FROM media",
+             SELECT rowid, path, name, category, author FROM media",
             [],
         )
         .unwrap();
-
         version = 4;
         set_version(tx, version);
     }
@@ -137,10 +121,8 @@ pub fn run_migrations(tx: &Transaction) {
             [],
         )
         .unwrap();
-
         tx.execute("CREATE INDEX idx_last_seen ON media(last_seen_scan)", [])
             .unwrap();
-
         version = 5;
         set_version(tx, version);
     }
@@ -149,7 +131,6 @@ pub fn run_migrations(tx: &Transaction) {
     if version < 6 {
         tx.execute("DROP TRIGGER IF EXISTS trg_media_au", [])
             .unwrap();
-
         tx.execute(
             "CREATE TRIGGER trg_media_au AFTER UPDATE ON media
              WHEN old.name     != new.name
@@ -164,12 +145,17 @@ pub fn run_migrations(tx: &Transaction) {
             [],
         )
         .unwrap();
-
         version = 6;
         set_version(tx, version);
     }
 
     // === MIGRATION 7 ===
+    // • Rename category → copyright, author → artist
+    // • Add characters TEXT (scanner + user-editable)
+    // • Add tags TEXT (user-managed only; never clobbered by scanner)
+    // • Rebuild FTS5 table and all three triggers with new column set
+    // • FTS triggers use replace(col,'|',' ') so unicode61 tokenises each
+    // • pipe-separated value as an independent search token
     if version < 7 {
         tx.execute("ALTER TABLE media RENAME COLUMN category TO copyright", [])
             .unwrap();
@@ -207,12 +193,7 @@ pub fn run_migrations(tx: &Transaction) {
 
         tx.execute(
             "CREATE VIRTUAL TABLE media_fts USING fts5(
-                path,
-                name,
-                copyright,
-                artist,
-                characters,
-                tags
+                path, name, copyright, artist, characters, tags
             )",
             [],
         )
@@ -222,11 +203,7 @@ pub fn run_migrations(tx: &Transaction) {
             "CREATE TRIGGER trg_media_ai AFTER INSERT ON media BEGIN
                 INSERT INTO media_fts(rowid, path, name, copyright, artist, characters, tags)
                 VALUES (
-                    new.rowid,
-                    new.path,
-                    new.name,
-                    new.copyright,
-                    new.artist,
+                    new.rowid, new.path, new.name, new.copyright, new.artist,
                     replace(new.characters, '|', ' '),
                     replace(new.tags,       '|', ' ')
                 );
@@ -255,11 +232,7 @@ pub fn run_migrations(tx: &Transaction) {
                  DELETE FROM media_fts WHERE rowid = old.rowid;
                  INSERT INTO media_fts(rowid, path, name, copyright, artist, characters, tags)
                  VALUES (
-                     new.rowid,
-                     new.path,
-                     new.name,
-                     new.copyright,
-                     new.artist,
+                     new.rowid, new.path, new.name, new.copyright, new.artist,
                      replace(new.characters, '|', ' '),
                      replace(new.tags,       '|', ' ')
                  );

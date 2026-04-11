@@ -1,6 +1,8 @@
-use crossbeam_channel::{bounded, Receiver};
+use crossbeam_channel::Receiver;
 
-use crate::core::models::{DbCommand, MediaFilter, MediaItem, SortOrder};
+use crate::core::models::{
+    DbCommand, FieldFilter, LibraryStats, MediaFilter, MediaItem, SortOrder,
+};
 use crate::data::db_worker::get_db;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -19,8 +21,9 @@ impl DbService {
         offset: usize,
         filter: MediaFilter,
         sort: SortOrder,
+        field_filter: Option<FieldFilter>,
     ) -> (u64, Receiver<(u64, Vec<Arc<MediaItem>>)>) {
-        let (tx, rx) = bounded(1);
+        let (tx, rx) = crossbeam_channel::bounded(1);
         let id = next_id();
 
         get_db()
@@ -30,6 +33,7 @@ impl DbService {
                 offset,
                 filter,
                 sort,
+                field_filter,
                 resp: tx,
             })
             .ok();
@@ -43,8 +47,9 @@ impl DbService {
         offset: usize,
         filter: MediaFilter,
         sort: SortOrder,
+        field_filter: Option<FieldFilter>,
     ) -> (u64, Receiver<(u64, Vec<Arc<MediaItem>>)>) {
-        let (tx, rx) = bounded(1);
+        let (tx, rx) = crossbeam_channel::bounded(1);
         let id = next_id();
 
         get_db()
@@ -55,6 +60,7 @@ impl DbService {
                 offset,
                 filter,
                 sort,
+                field_filter,
                 resp: tx,
             })
             .ok();
@@ -69,5 +75,20 @@ impl DbService {
                 tags: tags.join("|"),
             })
             .ok();
+    }
+
+    pub fn update_characters(path: String, characters: Vec<String>) {
+        get_db()
+            .send(DbCommand::UpdateCharacters {
+                path,
+                characters: characters.join("|"),
+            })
+            .ok();
+    }
+
+    pub fn query_stats() -> Receiver<LibraryStats> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        get_db().send(DbCommand::QueryStats { resp: tx }).ok();
+        rx
     }
 }

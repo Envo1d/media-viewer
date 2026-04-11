@@ -1,12 +1,100 @@
-use crate::core::models::{MediaFilter, SortOrder};
+use crate::core::models::{FieldFilter, MediaFilter, SortOrder};
 use crate::ui::app::MediaApp;
-use crate::ui::colors::{C_INPUT_BG, C_TEXT_MUTED};
+use crate::ui::colors::{
+    C_BLURPLE, C_HOVER, C_INPUT_BG, C_SELECTED, C_TEXT, C_TEXT_HEADER, C_TEXT_MUTED,
+};
 use crate::ui::components::search_input::search_input;
 use crate::ui::components::widgets::filter_chip::filter_chip;
 use crate::ui::components::widgets::section_heading::section_heading;
 use crate::ui::components::widgets::sort_row::sort_row;
 use crate::ui::components::widgets::toggle::toggle;
-use egui::{CornerRadius, Frame, Margin, RichText};
+use egui::{Color32, CornerRadius, FontId, Frame, Margin, Pos2, RichText, Sense, Vec2};
+
+fn stat_chip(ui: &mut egui::Ui, label: &str, count: u32, active: bool) -> bool {
+    let desired = Vec2::new(ui.available_width(), 28.0);
+    let (rect, resp) = ui.allocate_exact_size(desired, Sense::click());
+
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+
+    if ui.is_rect_visible(rect) {
+        let bg = if active {
+            C_BLURPLE
+        } else if resp.hovered() {
+            C_HOVER
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(rect, CornerRadius::same(6), bg);
+
+        if active {
+            let stripe = egui::Rect::from_min_size(rect.min, Vec2::new(3.0, rect.height()));
+            ui.painter()
+                .rect_filled(stripe, CornerRadius::same(2), Color32::WHITE);
+        }
+
+        let text_color = if active { C_TEXT_HEADER } else { C_TEXT };
+        ui.painter().text(
+            Pos2::new(rect.min.x + 10.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            FontId::proportional(12.5),
+            text_color,
+        );
+
+        let badge_color = if active {
+            Color32::from_rgba_premultiplied(255, 255, 255, 160)
+        } else {
+            C_TEXT_MUTED
+        };
+        ui.painter().text(
+            Pos2::new(rect.max.x - 6.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            count.to_string(),
+            FontId::proportional(11.0),
+            badge_color,
+        );
+    }
+
+    resp.clicked()
+}
+
+fn tag_flow_chip(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
+    const H: f32 = 22.0;
+    const PX: f32 = 8.0;
+    const FONT: f32 = 11.0;
+
+    let galley = ui.fonts_mut(|f| {
+        f.layout_no_wrap(label.to_owned(), FontId::proportional(FONT), Color32::WHITE)
+    });
+
+    let w = galley.rect.width() + PX * 2.0;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, H), Sense::click());
+
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+
+    if ui.is_rect_visible(rect) {
+        let bg = if active {
+            C_BLURPLE
+        } else if resp.hovered() {
+            C_SELECTED
+        } else {
+            C_INPUT_BG
+        };
+
+        ui.painter().rect_filled(rect, CornerRadius::same(4), bg);
+
+        let text_color = if active { C_TEXT_HEADER } else { C_TEXT_MUTED };
+        let text_y = rect.center().y - galley.rect.height() / 2.0;
+        ui.painter()
+            .galley(Pos2::new(rect.min.x + PX, text_y), galley, text_color);
+    }
+
+    resp.clicked()
+}
 
 pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     let prev_filter = app.filter.clone();
@@ -63,28 +151,63 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
             }
         });
 
-    section_heading(ui, "CARD SIZE");
+    if !app.sidebar_stats.top_artists.is_empty() {
+        section_heading(ui, "TOP ARTISTS");
 
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("S").color(C_TEXT_MUTED).size(11.0));
-        ui.add_space(4.0);
-        ui.add(
-            egui::Slider::new(&mut app.card_size, 120.0..=320.0)
-                .show_value(false)
-                .step_by(10.0),
-        );
-        ui.add_space(4.0);
-        ui.label(RichText::new("L").color(C_TEXT_MUTED).size(11.0));
-    });
+        let artists: Vec<(String, u32)> = app.sidebar_stats.top_artists.clone();
+        let current_ff = app.field_filter.clone();
+        for (artist, count) in &artists {
+            let active = current_ff
+                .as_ref()
+                .map(|f| matches!(f, FieldFilter::Artist(v) if v == artist))
+                .unwrap_or(false);
+            if stat_chip(ui, artist, *count, active) {
+                app.toggle_field_filter(FieldFilter::Artist(artist.clone()));
+            }
+        }
+    }
+
+    if !app.sidebar_stats.top_copyrights.is_empty() {
+        section_heading(ui, "TOP COPYRIGHTS");
+
+        let copyrights: Vec<(String, u32)> = app.sidebar_stats.top_copyrights.clone();
+        let current_ff = app.field_filter.clone();
+        for (cr, count) in &copyrights {
+            let active = current_ff
+                .as_ref()
+                .map(|f| matches!(f, FieldFilter::Copyright(v) if v == cr))
+                .unwrap_or(false);
+            if stat_chip(ui, cr, *count, active) {
+                app.toggle_field_filter(FieldFilter::Copyright(cr.clone()));
+            }
+        }
+    }
+
+    if !app.sidebar_stats.top_tags.is_empty() {
+        section_heading(ui, "TOP TAGS");
+
+        let tags: Vec<(String, u32)> = app.sidebar_stats.top_tags.clone();
+        let current_ff = app.field_filter.clone();
+
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+            for (tag, _count) in &tags {
+                let active = current_ff
+                    .as_ref()
+                    .map(|f| matches!(f, FieldFilter::Tag(v) if v == tag))
+                    .unwrap_or(false);
+                if tag_flow_chip(ui, tag, active) {
+                    app.toggle_field_filter(FieldFilter::Tag(tag.clone()));
+                }
+            }
+        });
+    }
 
     section_heading(ui, "SHOW PREVIEWS");
 
-    let id = ui.make_persistent_id("toggle_previews");
-
-    if toggle(ui, id, &mut app.show_previews) {
-        if !app.show_previews {
-            app.texture_manager.invalidate_prefetch();
-        }
+    let toggle_id = ui.make_persistent_id("toggle_previews");
+    if toggle(ui, toggle_id, &mut app.show_previews) && !app.show_previews {
+        app.texture_manager.invalidate_prefetch();
     }
 
     if app.filter != prev_filter || app.sort != prev_sort {

@@ -9,7 +9,7 @@ use egui::{
     RichText, Sense, Stroke, StrokeKind, Vec2,
 };
 
-const MODAL_W: f32 = 440.0;
+const MODAL_W: f32 = 460.0;
 
 // Chip geometry
 const TAG_H: f32 = 26.0;
@@ -35,11 +35,9 @@ fn chip(ui: &mut egui::Ui, label: &str, accent: Color32, icons: &IconRegistry) -
         Pos2::new(rect.max.x - X_ZONE_W, rect.min.y),
         Vec2::new(X_ZONE_W, TAG_H),
     );
-    let x_resp = ui.interact(x_rect, ui.id().with(label), Sense::click());
+    let mut x_resp = ui.interact(x_rect, ui.id().with(label), Sense::click());
 
-    if x_resp.hovered() {
-        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-    }
+    x_resp = x_resp.on_hover_cursor(CursorIcon::PointingHand);
 
     if ui.is_rect_visible(rect) {
         let bg = if x_resp.hovered() {
@@ -120,7 +118,7 @@ fn chip_section(
         .inner_margin(Margin::symmetric(12, 0))
         .stroke(Stroke::new(1.0, BORDER))
         .show(ui, |ui| {
-            ui.set_min_size(Vec2::new(MODAL_W - 40.0, 42.0));
+            ui.set_min_size(Vec2::new(MODAL_W - 64.0, 42.0));
             ui.horizontal(|ui| {
                 ui.set_min_height(42.0);
 
@@ -161,7 +159,7 @@ pub fn metadata_modal(app: &mut MediaApp, ui: &egui::Ui) {
 
     let icons = app.icons.as_ref().unwrap();
 
-    egui::Area::new(Id::new("metadata_modal_backdrop"))
+    egui::Area::new(Id::new("metadata_backdrop"))
         .fixed_pos(Pos2::ZERO)
         .order(egui::Order::Middle)
         .interactable(true)
@@ -177,6 +175,7 @@ pub fn metadata_modal(app: &mut MediaApp, ui: &egui::Ui) {
         .title_bar(false)
         .resizable(false)
         .collapsible(false)
+        .fixed_size([MODAL_W, 0.0])
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
         .frame(
             Frame::NONE
@@ -191,8 +190,7 @@ pub fn metadata_modal(app: &mut MediaApp, ui: &egui::Ui) {
                 }),
         )
         .show(ctx, |ui| {
-            ui.set_min_width(MODAL_W);
-            ui.set_max_width(MODAL_W);
+            ui.set_width(MODAL_W);
 
             Frame::NONE
                 .inner_margin(Margin::symmetric(20, 0))
@@ -201,7 +199,6 @@ pub fn metadata_modal(app: &mut MediaApp, ui: &egui::Ui) {
 
                     ui.horizontal(|ui| {
                         ui.set_min_height(48.0);
-
                         ui.label(
                             RichText::new("Edit Metadata")
                                 .size(16.0)
@@ -210,29 +207,28 @@ pub fn metadata_modal(app: &mut MediaApp, ui: &egui::Ui) {
                         );
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let (btn_rect, btn_resp) =
+                            let (btn_rect, mut btn_resp) =
                                 ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
                             if ui.is_rect_visible(btn_rect) {
                                 if btn_resp.hovered() {
                                     ui.painter().rect_filled(
                                         btn_rect,
                                         7.0,
-                                        Color32::from_rgba_premultiplied(255, 255, 255, 14),
+                                        Color32::from_rgba_premultiplied(255, 255, 255, 12),
                                     );
                                 }
                                 let close_icon = app.icons.as_ref().unwrap().get("close");
                                 let icon_rect =
-                                    Rect::from_center_size(btn_rect.center(), Vec2::splat(14.0));
+                                    Rect::from_center_size(btn_rect.center(), Vec2::splat(16.0));
                                 ui.put(
                                     icon_rect,
                                     Image::new(close_icon)
-                                        .fit_to_exact_size(Vec2::splat(14.0))
+                                        .fit_to_exact_size(Vec2::splat(16.0))
                                         .tint(C_TEXT_MUTED),
                                 );
                             }
-                            if btn_resp.hovered() {
-                                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-                            }
+                            btn_resp = btn_resp.on_hover_cursor(CursorIcon::PointingHand);
+
                             if btn_resp.clicked() {
                                 close = true;
                             }
@@ -250,13 +246,14 @@ pub fn metadata_modal(app: &mut MediaApp, ui: &egui::Ui) {
                     ui.add_space(8.0);
                 });
 
-            let (sep, _) = ui.allocate_exact_size(Vec2::new(MODAL_W, 1.0), Sense::hover());
+            let (sep, _) =
+                ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
             ui.painter().rect_filled(sep, 0.0, BORDER);
 
             Frame::NONE
                 .inner_margin(Margin::symmetric(20, 16))
                 .show(ui, |ui| {
-                    ui.set_width(MODAL_W - 40.0);
+                    ui.set_width(ui.available_width());
 
                     ui.label(RichText::new("CHARACTERS").size(10.5).color(C_TEXT_MUTED));
                     ui.add_space(6.0);
@@ -289,8 +286,8 @@ pub fn metadata_modal(app: &mut MediaApp, ui: &egui::Ui) {
 
                     ui.add_space(16.0);
 
-                    let (fsep, _) =
-                        ui.allocate_exact_size(Vec2::new(MODAL_W - 40.0, 1.0), Sense::hover());
+                    let (fsep, _) = ui
+                        .allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
                     ui.painter().rect_filled(fsep, 0.0, BORDER);
                     ui.add_space(12.0);
 

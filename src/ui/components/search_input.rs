@@ -1,5 +1,5 @@
 use crate::ui::app::MediaApp;
-use crate::ui::colors::{C_INPUT_BG, C_TEXT, C_TEXT_MUTED};
+use crate::ui::colors::{C_HOVER, C_INPUT_BG, C_TEXT, C_TEXT_MUTED};
 use egui::{CornerRadius, CursorIcon, Frame, Margin, Sense, Vec2};
 use std::time::Instant;
 
@@ -54,11 +54,7 @@ pub fn search_input(app: &mut MediaApp, ui: &mut egui::Ui) {
 
                         if ui.is_rect_visible(btn_rect) {
                             if resp.hovered() {
-                                ui.painter().circle_filled(
-                                    btn_rect.center(),
-                                    9.0,
-                                    egui::Color32::from_rgba_premultiplied(255, 255, 255, 18),
-                                );
+                                ui.painter().circle_filled(btn_rect.center(), 9.0, C_HOVER);
                             }
 
                             let tint = if resp.hovered() { C_TEXT } else { C_TEXT_MUTED };

@@ -5,8 +5,8 @@ use crate::ui::colors::{
 use crate::ui::texture_manager::TextureManager;
 use crate::utils::truncate;
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui,
-    Vec2,
+    Align2, Color32, CornerRadius, CursorIcon, FontId, Pos2, Rect, Response, Sense, Stroke,
+    StrokeKind, Ui, Vec2,
 };
 use std::sync::Arc;
 
@@ -165,6 +165,8 @@ pub fn media_card(
                 META_COLOR,
             );
         }
+
+        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     }
 
     let info_rect = Rect::from_min_size(

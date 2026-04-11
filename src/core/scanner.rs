@@ -63,10 +63,16 @@ impl MediaScanner {
 
         let walker_threads = num_cpus::get().clamp(1, MAX_WALKER_THREADS);
 
+        let excluded_dirs = vec!["S:\\Precious\\!Download".to_string()];
+
         WalkBuilder::new(&*root)
             .hidden(false)
             .git_ignore(false)
             .threads(walker_threads)
+            .filter_entry(move |entry| {
+                let path = entry.path().to_string_lossy();
+                !excluded_dirs.iter().any(|ex| path.starts_with(ex))
+            })
             .build_parallel()
             .run(|| {
                 let tx = item_tx.clone();

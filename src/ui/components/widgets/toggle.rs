@@ -10,7 +10,12 @@ pub fn toggle(ui: &mut egui::Ui, id: Id, value: &mut bool) -> bool {
     const W: f32 = 38.0;
     const H: f32 = 22.0;
 
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(W, H), Sense::click());
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(W, H), Sense::click());
+    
+    if resp.hovered() {
+        resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    }
+    
     if resp.clicked() {
         *value = !*value;
     }

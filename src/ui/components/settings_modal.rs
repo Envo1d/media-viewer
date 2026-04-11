@@ -11,8 +11,8 @@ use crate::ui::components::widgets::section_row::section_row;
 use crate::ui::components::widgets::toggle::toggle;
 use crate::utils::icon;
 use egui::{
-    Align2, Color32, CornerRadius, Frame, Id, Image, Margin, Pos2, Rect, RichText, Sense, Stroke,
-    Vec2,
+    Align2, Color32, CornerRadius, CursorIcon, Frame, Id, Image, Margin, Pos2, Rect, RichText,
+    Sense, Stroke, Vec2,
 };
 use rfd::FileDialog;
 
@@ -81,20 +81,6 @@ fn library_section(app: &mut MediaApp, ui: &mut egui::Ui) {
                     app.config.library_path = Some(folder.into());
                     let _ = app.config.save();
                 }
-            }
-        });
-    });
-
-    section_row(ui, false, true, |ui| {
-        icon(ui, icons.get("folder_open"), 16.0);
-        ui.add_space(10.0);
-        ui.label(RichText::new("Open in Explorer").size(12.5).color(C_TEXT));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let en = !app.root_path.is_empty();
-            if pill_button(ui, "Open", en) && en {
-                let _ = std::process::Command::new("explorer")
-                    .arg(&app.root_path)
-                    .spawn();
             }
         });
     });
@@ -408,6 +394,7 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
                 .inner_margin(Margin::symmetric(20, 0))
                 .show(ui, |ui| {
                     ui.set_min_size(Vec2::new(MODAL_W - 40.0, 56.0));
+
                     ui.horizontal(|ui| {
                         ui.set_min_height(56.0);
                         ui.label(
@@ -417,7 +404,7 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
                                 .strong(),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let (rect, resp) =
+                            let (rect, mut resp) =
                                 ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
                             if ui.is_rect_visible(rect) {
                                 if resp.hovered() {
@@ -437,6 +424,8 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
                                         .tint(C_TEXT_MUTED),
                                 );
                             }
+                            resp = resp.on_hover_cursor(CursorIcon::PointingHand);
+
                             if resp.clicked() {
                                 close = true;
                             }

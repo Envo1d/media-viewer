@@ -1,5 +1,5 @@
 use crate::ui::colors::{C_BLURPLE, C_TEXT_HEADER, C_TEXT_MUTED};
-use egui::{Color32, FontId, Sense, Vec2};
+use egui::{FontId, Sense, Vec2};
 
 pub fn pill_button(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
     const PX: f32 = 14.0;
@@ -19,14 +19,16 @@ pub fn pill_button(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
     } else {
         Sense::hover()
     };
-    let (rect, resp) = ui.allocate_exact_size(size, sense);
+    let (rect, mut resp) = ui.allocate_exact_size(size, sense);
 
     if ui.is_rect_visible(rect) {
         let fill = if !enabled {
-            Color32::from_rgba_premultiplied(255, 255, 255, 6)
+            resp = resp.on_hover_cursor(egui::CursorIcon::NotAllowed);
+            C_BLURPLE.linear_multiply(0.20)
         } else if resp.is_pointer_button_down_on() {
             C_BLURPLE.linear_multiply(0.70)
         } else if resp.hovered() {
+            resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
             C_BLURPLE.linear_multiply(0.85)
         } else {
             C_BLURPLE

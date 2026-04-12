@@ -402,7 +402,7 @@ impl eframe::App for MediaApp {
                         se: 0,
                     }))
                     .show_inside(ui, |ui| {
-                        components::custom_title_bar(ui, self);
+                        components::title_bar(ui, self);
                     });
 
                 egui::Panel::left("sidebar")

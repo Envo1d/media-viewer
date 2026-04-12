@@ -14,7 +14,7 @@ pub fn danger_button(ui: &mut egui::Ui, label: &str) -> bool {
         galley.rect.height() + PY * 2.0,
     );
 
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
 
     if ui.is_rect_visible(rect) {
         let fill = if resp.is_pointer_button_down_on() {
@@ -28,6 +28,10 @@ pub fn danger_button(ui: &mut egui::Ui, label: &str) -> bool {
         ui.painter().rect_filled(rect, 6.0, fill);
         ui.painter()
             .galley(rect.min + Vec2::new(PX, PY), galley, Color32::WHITE);
+    }
+
+    if resp.hovered() {
+        resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     }
 
     resp.clicked()

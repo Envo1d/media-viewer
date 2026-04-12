@@ -1,9 +1,9 @@
 use crate::ui::colors::{C_BLURPLE, C_HOVER, C_SELECTED, C_TEXT, C_TEXT_HEADER};
-use egui::{Color32, CornerRadius, FontId, Sense, Vec2};
+use egui::{Color32, CornerRadius, CursorIcon, FontId, Sense, Vec2};
 
 pub fn sort_row(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
     let desired = Vec2::new(ui.available_width(), 28.0);
-    let (rect, response) = ui.allocate_exact_size(desired, Sense::click());
+    let (rect, mut response) = ui.allocate_exact_size(desired, Sense::click());
 
     if ui.is_rect_visible(rect) {
         let fill = if active {
@@ -30,6 +30,10 @@ pub fn sort_row(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
             FontId::proportional(13.0),
             text_color,
         );
+    }
+
+    if response.hovered() {
+        response = response.on_hover_cursor(CursorIcon::PointingHand);
     }
 
     response.clicked()

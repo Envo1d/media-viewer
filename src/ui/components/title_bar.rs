@@ -1,17 +1,18 @@
 use crate::ui::app::MediaApp;
 use crate::ui::colors::{HOVER_CLOSE, HOVER_STANDARD, ICON_IDLE};
-use egui::{Color32, Image, PointerButton, Sense, Vec2};
+use egui::{Color32, CursorIcon, Image, PointerButton, Sense, Vec2};
 
 const ICON_SIZE: f32 = 12.0;
 const BTN_W: f32 = 36.0;
 
 fn chrome_btn(ui: &mut egui::Ui, hover_bg: Color32, icon: &egui::TextureHandle) -> egui::Response {
     let h = ui.available_height();
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(BTN_W, h), Sense::click());
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(BTN_W, h), Sense::click());
 
     if ui.is_rect_visible(rect) {
         if resp.hovered() {
             ui.painter().rect_filled(rect, 0.0, hover_bg);
+            resp = resp.on_hover_cursor(CursorIcon::PointingHand);
         }
 
         let tint = if resp.hovered() {
@@ -33,7 +34,7 @@ fn chrome_btn(ui: &mut egui::Ui, hover_bg: Color32, icon: &egui::TextureHandle) 
     resp
 }
 
-pub fn custom_title_bar(ui: &mut egui::Ui, app: &mut MediaApp) {
+pub fn title_bar(ui: &mut egui::Ui, app: &mut MediaApp) {
     let app_icon = app.app_icon.clone();
     let icons = app.icons.as_ref().unwrap();
 

@@ -10,8 +10,6 @@ pub fn search_input(app: &mut MediaApp, ui: &mut egui::Ui) {
         egui::vec2(ui.available_width(), 68.0),
         egui::Layout::top_down(egui::Align::Min),
         |ui| {
-            ui.add_space(12.0);
-
             Frame::NONE
                 .fill(C_INPUT_BG)
                 .corner_radius(CornerRadius::same(8))

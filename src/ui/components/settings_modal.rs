@@ -17,6 +17,7 @@ use egui::{
 use rfd::FileDialog;
 
 const MODAL_W: f32 = 460.0;
+const MODAL_H: f32 = 800.0;
 
 fn dir_size_mb(path: &std::path::Path) -> f64 {
     let Ok(entries) = std::fs::read_dir(path) else {
@@ -373,7 +374,7 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
         .title_bar(false)
         .resizable(false)
         .collapsible(false)
-        .fixed_size([MODAL_W, 0.0])
+        .fixed_size([MODAL_W, MODAL_H])
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
         .frame(
             Frame::NONE
@@ -397,6 +398,7 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
 
                     ui.horizontal(|ui| {
                         ui.set_min_height(56.0);
+                        ui.style_mut().interaction.selectable_labels = false;
                         ui.label(
                             RichText::new("Settings")
                                 .size(16.0)
@@ -441,11 +443,17 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
                 .show(ui, |ui| {
                     ui.set_width(MODAL_W - 36.0);
 
-                    library_section(app, ui);
-                    structure_section(app, ui, &mut rescan_requested);
-                    indexing_section(app, ui);
-                    appearance_section(app, ui);
-                    cache_section(app, ui);
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                        .animated(false)
+                        .show(ui, |ui| {
+                            library_section(app, ui);
+                            structure_section(app, ui, &mut rescan_requested);
+                            indexing_section(app, ui);
+                            appearance_section(app, ui);
+                            cache_section(app, ui);
+                        });
 
                     ui.add_space(18.0);
                     let (fsep, _) =
@@ -454,6 +462,7 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
                     ui.add_space(12.0);
 
                     ui.horizontal(|ui| {
+                        ui.style_mut().interaction.selectable_labels = false;
                         ui.label(RichText::new("Nexa").size(11.0).color(C_TEXT_MUTED));
                         ui.add_space(4.0);
                         ui.label(

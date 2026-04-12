@@ -94,6 +94,7 @@ fn chip_section(
 ) {
     let mut remove_idx: Option<usize> = None;
     if items.is_empty() {
+        ui.style_mut().interaction.selectable_labels = false;
         ui.label(RichText::new(empty_label).size(11.5).color(C_TEXT_MUTED));
         ui.add_space(8.0);
     } else {
@@ -199,6 +200,7 @@ pub fn metadata_modal(app: &mut MediaApp, ui: &egui::Ui) {
 
                     ui.horizontal(|ui| {
                         ui.set_min_height(48.0);
+                        ui.style_mut().interaction.selectable_labels = false;
                         ui.label(
                             RichText::new("Edit Metadata")
                                 .size(16.0)
@@ -241,6 +243,7 @@ pub fn metadata_modal(app: &mut MediaApp, ui: &egui::Ui) {
                         } else {
                             item.name.clone()
                         };
+                        ui.style_mut().interaction.selectable_labels = false;
                         ui.label(RichText::new(name).size(10.5).color(C_TEXT_MUTED));
                     }
                     ui.add_space(8.0);
@@ -255,6 +258,7 @@ pub fn metadata_modal(app: &mut MediaApp, ui: &egui::Ui) {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
 
+                    ui.style_mut().interaction.selectable_labels = false;
                     ui.label(RichText::new("CHARACTERS").size(10.5).color(C_TEXT_MUTED));
                     ui.add_space(6.0);
 

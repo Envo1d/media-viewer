@@ -39,7 +39,7 @@ pub fn combo_box(
     options: &[&str],
     width: f32,
 ) -> Option<usize> {
-    let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(width, BTN_H), Sense::click());
+    let (btn_rect, mut btn_resp) = ui.allocate_exact_size(Vec2::new(width, BTN_H), Sense::click());
 
     let is_open = ui
         .ctx()
@@ -66,6 +66,10 @@ pub fn combo_box(
 
         let chevron_cx = btn_rect.max.x - ARROW_ZONE / 2.0;
         draw_chevron(ui, Pos2::new(chevron_cx, btn_rect.center().y), is_open);
+    }
+
+    if btn_resp.hovered() {
+        btn_resp = btn_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     }
 
     if btn_resp.clicked() {
@@ -110,7 +114,7 @@ pub fn combo_box(
 
                     for (i, &label) in options.iter().enumerate() {
                         let item_id = id.with(i);
-                        let (item_rect, item_resp) =
+                        let (item_rect, mut item_resp) =
                             ui.allocate_exact_size(Vec2::new(width - 8.0, ITEM_H), Sense::click());
 
                         if ui.is_rect_visible(item_rect) {
@@ -129,6 +133,7 @@ pub fn combo_box(
                                 );
                                 ui.painter()
                                     .rect_filled(stripe, CornerRadius::same(2), C_BLURPLE);
+                                item_resp = item_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                             }
 
                             let text_color = if item_resp.hovered() {

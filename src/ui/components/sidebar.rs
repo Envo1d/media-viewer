@@ -113,6 +113,7 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         ui.add_space(2.0);
+        ui.style_mut().interaction.selectable_labels = false;
         ui.label(RichText::new(count_text).color(C_TEXT_MUTED).size(11.0));
     });
 

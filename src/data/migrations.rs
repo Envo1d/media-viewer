@@ -251,4 +251,32 @@ pub fn run_migrations(tx: &Transaction) {
         version = 7;
         set_version(tx, version);
     }
+
+    // === MIGRATION 8 ===
+    // Staging / inbox table.
+    // Holds files discovered in the staging folder before they are distributed
+    // into the main library. No copyright / artist / characters / tags columns
+    // because those are supplied by the user at distribution time.
+    if version < 8 {
+        tx.execute(
+            "CREATE TABLE staging (
+                path            TEXT PRIMARY KEY,
+                name            TEXT NOT NULL,
+                media_type      TEXT NOT NULL,
+                modified        INTEGER DEFAULT 0,
+                last_seen_scan  INTEGER DEFAULT 0
+            )",
+            [],
+        )
+        .unwrap();
+
+        tx.execute(
+            "CREATE INDEX idx_staging_last_seen ON staging(last_seen_scan)",
+            [],
+        )
+        .unwrap();
+
+        version = 8;
+        set_version(tx, version);
+    }
 }

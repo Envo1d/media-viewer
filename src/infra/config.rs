@@ -29,6 +29,10 @@ fn default_char_sep() -> String {
     " x ".to_owned()
 }
 
+fn default_video_subfolder() -> String {
+    String::new()
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppConfig {
     pub library_path: Option<PathBuf>,
@@ -41,6 +45,11 @@ pub struct AppConfig {
     pub folder_mapping: FolderMapping,
     #[serde(default = "default_char_sep")]
     pub character_separator: String,
+
+    pub staging_path: Option<PathBuf>,
+
+    #[serde(default = "default_video_subfolder")]
+    pub video_subfolder: String,
 }
 
 impl Default for AppConfig {
@@ -53,6 +62,8 @@ impl Default for AppConfig {
             auto_scan: false,
             folder_mapping: FolderMapping::default(),
             character_separator: default_char_sep(),
+            staging_path: None,
+            video_subfolder: default_video_subfolder(),
         }
     }
 }

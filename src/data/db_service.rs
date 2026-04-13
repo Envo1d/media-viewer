@@ -1,9 +1,9 @@
-use crossbeam_channel::Receiver;
-
 use crate::core::models::{
-    DbCommand, FieldFilter, LibraryStats, MediaFilter, MediaItem, SortOrder,
+    AutocompleteData, DbCommand, FieldFilter, LibraryStats, MediaFilter, MediaItem, SortOrder,
+    StagingItem,
 };
 use crate::data::db_worker::get_db;
+use crossbeam_channel::Receiver;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -68,20 +68,34 @@ impl DbService {
         (id, rx)
     }
 
-    pub fn update_tags(path: String, tags: Vec<String>) {
+    pub fn update_metadata(
+        path: String,
+        copyright: String,
+        artist: String,
+        characters: Vec<String>,
+        tags: Vec<String>,
+    ) {
         get_db()
-            .send(DbCommand::UpdateTags {
+            .send(DbCommand::UpdateMetadata {
                 path,
+                copyright,
+                artist,
+                characters: characters.join("|"),
                 tags: tags.join("|"),
             })
             .ok();
     }
 
-    pub fn update_characters(path: String, characters: Vec<String>) {
+    pub fn insert_distributed(item: Arc<MediaItem>) {
+        get_db().send(DbCommand::InsertDistributed { item }).ok();
+    }
+
+    pub fn rename_media_path(old_path: String, new_path: String, new_name: String) {
         get_db()
-            .send(DbCommand::UpdateCharacters {
-                path,
-                characters: characters.join("|"),
+            .send(DbCommand::RenameMediaPath {
+                old_path,
+                new_path,
+                new_name,
             })
             .ok();
     }
@@ -90,5 +104,23 @@ impl DbService {
         let (tx, rx) = crossbeam_channel::bounded(1);
         get_db().send(DbCommand::QueryStats { resp: tx }).ok();
         rx
+    }
+
+    pub fn query_autocomplete() -> Receiver<AutocompleteData> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        get_db()
+            .send(DbCommand::QueryAutocomplete { resp: tx })
+            .ok();
+        rx
+    }
+
+    pub fn staging_query() -> Receiver<Vec<Arc<StagingItem>>> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        get_db().send(DbCommand::StagingQuery { resp: tx }).ok();
+        rx
+    }
+
+    pub fn staging_delete_by_path(path: String) {
+        get_db().send(DbCommand::StagingDeleteByPath(path)).ok();
     }
 }

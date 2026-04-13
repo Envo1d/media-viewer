@@ -17,6 +17,7 @@ impl MediaScanner {
         root_path: String,
         mapping: FolderMapping,
         char_sep: String,
+        excluded_dirs: Vec<String>,
         ui_tx: Sender<ScanEvent>,
         db_tx: Sender<DbCommand>,
     ) {
@@ -60,10 +61,9 @@ impl MediaScanner {
         let root = Arc::new(root_path);
         let mapping = Arc::new(mapping);
         let char_sep = Arc::new(char_sep);
+        let excluded_dirs = Arc::new(excluded_dirs);
 
         let walker_threads = num_cpus::get().clamp(1, MAX_WALKER_THREADS);
-
-        let excluded_dirs = vec!["S:\\Precious\\!Download".to_string()];
 
         WalkBuilder::new(&*root)
             .hidden(false)
@@ -71,7 +71,7 @@ impl MediaScanner {
             .threads(walker_threads)
             .filter_entry(move |entry| {
                 let path = entry.path().to_string_lossy();
-                !excluded_dirs.iter().any(|ex| path.starts_with(ex))
+                !excluded_dirs.iter().any(|ex| path.starts_with(ex.as_str()))
             })
             .build_parallel()
             .run(|| {
@@ -102,12 +102,13 @@ impl MediaScanner {
         root_path: String,
         mapping: FolderMapping,
         char_sep: String,
+        excluded_dirs: Vec<String>,
         ui_tx: Sender<ScanEvent>,
         db_tx: Sender<DbCommand>,
     ) {
         thread::Builder::new()
             .name("nexa-scanner".into())
-            .spawn(move || Self::run(root_path, mapping, char_sep, ui_tx, db_tx))
+            .spawn(move || Self::run(root_path, mapping, char_sep, excluded_dirs, ui_tx, db_tx))
             .expect("Failed to spawn scanner thread");
     }
 }

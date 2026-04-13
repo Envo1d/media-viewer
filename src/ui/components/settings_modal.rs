@@ -85,6 +85,44 @@ fn library_section(app: &mut MediaApp, ui: &mut egui::Ui) {
             }
         });
     });
+
+    section_row(ui, false, true, |ui| {
+        icon(ui, icons.get("folder_open"), 16.0);
+        ui.add_space(10.0);
+        ui.vertical(|ui| {
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("Staging / inbox folder")
+                    .size(12.5)
+                    .color(C_TEXT),
+            );
+            let shown = match &app.config.staging_path {
+                None => "No folder selected".to_owned(),
+                Some(p) => {
+                    let s = p.to_string_lossy();
+                    if s.len() > 42 {
+                        format!("…{}", &s[s.len() - 40..])
+                    } else {
+                        s.to_string()
+                    }
+                }
+            };
+            ui.label(RichText::new(shown).size(10.5).color(C_TEXT_MUTED));
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if pill_button(ui, "Browse", true) {
+                let start = app
+                    .config
+                    .staging_path
+                    .clone()
+                    .unwrap_or_else(|| std::path::PathBuf::from("/"));
+                if let Some(folder) = FileDialog::new().set_directory(start).pick_folder() {
+                    app.config.staging_path = Some(folder);
+                    let _ = app.config.save();
+                }
+            }
+        });
+    });
 }
 
 fn structure_section(app: &mut MediaApp, ui: &mut egui::Ui, rescan_requested: &mut bool) {
@@ -148,7 +186,6 @@ fn structure_section(app: &mut MediaApp, ui: &mut egui::Ui, rescan_requested: &m
         });
     });
 
-    let mut sep = app.config.character_separator.clone();
     section_row(ui, false, false, |ui| {
         ui.vertical(|ui| {
             ui.add_space(12.0);
@@ -165,12 +202,45 @@ fn structure_section(app: &mut MediaApp, ui: &mut egui::Ui, rescan_requested: &m
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let resp = ui.add(
-                egui::TextEdit::singleline(&mut sep)
+                egui::TextEdit::singleline(&mut app.character_separator_input)
                     .desired_width(64.0)
                     .hint_text(" x "),
             );
-            if resp.lost_focus() && sep != app.config.character_separator {
-                app.config.character_separator = sep;
+            if resp.lost_focus() && resp.changed() {
+                app.config.character_separator = app.character_separator_input.clone();
+                let _ = app.config.save();
+            }
+        });
+    });
+
+    section_row(ui, false, false, |ui| {
+        ui.vertical(|ui| {
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("Video subfolder name")
+                    .size(12.5)
+                    .color(C_TEXT),
+            );
+            ui.label(
+                RichText::new(
+                    "Subfolder inside <artist>/ where videos are placed.\nLeave blank to place videos alongside images.",
+                )
+                    .size(10.5)
+                    .color(C_TEXT_MUTED),
+            );
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut app.video_subfolder_input)
+                    .desired_width(80.0)
+                    .hint_text("Videos"),
+            );
+
+            if resp.changed() {
+                app.config.video_subfolder = app.video_subfolder_input.clone();
+            }
+
+            if resp.lost_focus() {
                 let _ = app.config.save();
             }
         });
@@ -224,6 +294,35 @@ fn indexing_section(app: &mut MediaApp, ui: &mut egui::Ui) {
                 let en = !app.root_path.is_empty();
                 if pill_button(ui, "Scan now", en) && en {
                     app.rescan();
+                }
+            }
+        });
+    });
+
+    section_row(ui, false, false, |ui| {
+        icon(ui, &search_icon, 16.0);
+        ui.add_space(10.0);
+        ui.vertical(|ui| {
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("Scan staging folder")
+                    .size(12.5)
+                    .color(C_TEXT),
+            );
+            let sub = if app.scan_manager.is_staging_scanning {
+                format!("{} files indexed…", app.scan_manager.staging_files_scanned)
+            } else {
+                "Re-index the staging / inbox folder".to_owned()
+            };
+            ui.label(RichText::new(sub).size(10.5).color(C_TEXT_MUTED));
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if app.scan_manager.is_staging_scanning {
+                ui.spinner();
+            } else {
+                let en = app.config.staging_path.is_some();
+                if pill_button(ui, "Scan now", en) && en {
+                    app.rescan_staging();
                 }
             }
         });

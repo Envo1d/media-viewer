@@ -12,29 +12,35 @@ fn start_db_worker() -> Sender<DbCommand> {
         .name("nexa-db-worker".into())
         .spawn(move || {
             let mut db = Database::new();
-
             for cmd in rx {
                 if let Err(e) =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match cmd {
-                        DbCommand::UpsertBatch(items, scan_id) => {
-                            db.upsert_batch(&items, scan_id);
+                        DbCommand::UpsertBatch(items, scan_id) => db.upsert_batch(&items, scan_id),
+                        DbCommand::DeleteNotSeen(scan_id) => db.delete_not_seen(scan_id),
+                        DbCommand::DeleteByPath(path) => db.delete_by_path(&path),
+
+                        DbCommand::UpdateMetadata {
+                            path,
+                            copyright,
+                            artist,
+                            characters,
+                            tags,
+                        } => {
+                            db.update_metadata(&path, &copyright, &artist, &characters, &tags);
                         }
-                        DbCommand::DeleteNotSeen(scan_id) => {
-                            db.delete_not_seen(scan_id);
+
+                        DbCommand::RenameMediaPath {
+                            old_path,
+                            new_path,
+                            new_name,
+                        } => {
+                            db.rename_media_path(&old_path, &new_path, &new_name);
                         }
-                        DbCommand::DeleteByPath(path) => {
-                            db.delete_by_path(&path);
-                        }
-                        DbCommand::UpdateTags { path, tags } => {
-                            db.update_tags(&path, &tags);
-                        }
-                        DbCommand::UpdateCharacters { path, characters } => {
-                            db.update_characters(&path, &characters);
-                        }
+
                         DbCommand::QueryStats { resp } => {
-                            let stats = db.query_stats();
-                            let _ = resp.send(stats);
+                            let _ = resp.send(db.query_stats());
                         }
+
                         DbCommand::Query {
                             id,
                             limit,
@@ -48,6 +54,7 @@ fn start_db_worker() -> Sender<DbCommand> {
                             let arced: Vec<Arc<_>> = items.into_iter().map(Arc::new).collect();
                             let _ = resp.send((id, arced));
                         }
+
                         DbCommand::Search {
                             id,
                             query,
@@ -62,6 +69,25 @@ fn start_db_worker() -> Sender<DbCommand> {
                                 db.search(&query, limit, offset, &filter, &sort, &field_filter);
                             let arced: Vec<Arc<_>> = items.into_iter().map(Arc::new).collect();
                             let _ = resp.send((id, arced));
+                        }
+
+                        DbCommand::InsertDistributed { item } => db.insert_distributed(&item),
+
+                        DbCommand::StagingUpsertBatch(items, scan_id) => {
+                            db.staging_upsert_batch(&items, scan_id)
+                        }
+                        DbCommand::StagingDeleteNotSeen(scan_id) => {
+                            db.staging_delete_not_seen(scan_id)
+                        }
+                        DbCommand::StagingDeleteByPath(path) => db.staging_delete_by_path(&path),
+                        DbCommand::StagingQuery { resp } => {
+                            let items = db.staging_query();
+                            let arced: Vec<Arc<_>> = items.into_iter().map(Arc::new).collect();
+                            let _ = resp.send(arced);
+                        }
+
+                        DbCommand::QueryAutocomplete { resp } => {
+                            let _ = resp.send(db.query_autocomplete());
                         }
                     }))
                 {

@@ -23,9 +23,11 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
         .max(1.0) as usize;
 
     let grid_w = columns as f32 * card_sz + (columns - 1) as f32 * COL_GAP;
+
     let h_pad = SIDE_PAD + ((usable_w - grid_w) * 0.5).max(0.0);
 
     let row_h = card_sz + ROW_GAP;
+
     let total_items = app.displayed_items.len();
     let total_rows = (total_items + columns - 1) / columns;
 
@@ -91,7 +93,7 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
         });
 
     if let Some(item) = edit_request {
-        app.open_metadata_modal(item);
+        app.open_edit_modal(item);
     }
 
     let scroll_y = out.state.offset.y;

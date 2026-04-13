@@ -14,8 +14,9 @@ use egui::{
 };
 use std::sync::Arc;
 
-const MODAL_W: f32 = 540.0;
+const MODAL_W: f32 = 500.0;
 const INNER_W: f32 = MODAL_W - 40.0;
+
 const TAG_H: f32 = 26.0;
 const TAG_FONT: f32 = 11.5;
 const TAG_PAD_X: f32 = 10.0;
@@ -93,7 +94,7 @@ impl MediaModalState {
 fn filter_suggestions(list: &[String], query: &str) -> Vec<String> {
     let q = query.trim().to_lowercase();
     if q.is_empty() {
-        return Vec::new(); // never show suggestions on empty input
+        return Vec::new();
     }
     list.iter()
         .filter(|s| s.to_lowercase().contains(&q))
@@ -173,7 +174,6 @@ fn dropdown(
         return (None, false);
     }
 
-    let drop_h = visible.len() as f32 * ROW_H + 8.0;
     let mut clicked: Option<usize> = None;
 
     let area = egui::Area::new(popup_id)
@@ -222,16 +222,7 @@ fn dropdown(
         .ctx()
         .input(|i| i.pointer.interact_pos())
         .unwrap_or_default();
-    let any_click = ui.ctx().input(|i| i.pointer.any_click());
-
-    let outside = any_click
-        && !area.response.rect.contains(ptr)
-        && !egui::Rect::from_min_size(
-            anchor - Vec2::new(0.0, drop_h),
-            Vec2::new(width, drop_h * 2.0),
-        )
-        .contains(ptr);
-
+    let outside = ui.ctx().input(|i| i.pointer.any_click()) && !area.response.rect.contains(ptr);
     (clicked, outside)
 }
 
@@ -245,41 +236,43 @@ fn autocomplete_single(
 ) -> bool {
     let mut changed = false;
 
-    Frame::NONE
-        .fill(SECTION_BG)
-        .corner_radius(CornerRadius::same(8))
-        .inner_margin(Margin::symmetric(12, 0))
-        .stroke(Stroke::new(1.0, BORDER))
-        .show(ui, |ui| {
-            ui.set_min_size(Vec2::new(INNER_W, 42.0));
-            ui.horizontal(|ui| {
-                ui.set_min_height(42.0);
-                let resp = ui.add(
-                    egui::TextEdit::singleline(value)
-                        .hint_text(hint)
-                        .frame(Frame::NONE)
-                        .desired_width(f32::INFINITY)
-                        .text_color(C_TEXT),
-                );
-                if resp.changed() {
-                    changed = true;
-                    *popup_open = !value.trim().is_empty();
-                }
-            });
-        });
+    ui.allocate_ui_with_layout(
+        egui::vec2(INNER_W, 42.0),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            Frame::NONE
+                .fill(SECTION_BG)
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(Margin::symmetric(12, 12))
+                .stroke(Stroke::new(1.0, BORDER))
+                .show(ui, |ui| {
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(value)
+                            .hint_text(hint)
+                            .frame(Frame::NONE)
+                            .desired_width(f32::INFINITY)
+                            .text_color(C_TEXT),
+                    );
+                    if resp.changed() {
+                        changed = true;
+                        *popup_open = !value.trim().is_empty();
+                    }
+                });
 
-    if *popup_open && !suggestions.is_empty() {
-        let anchor = Pos2::new(ui.min_rect().min.x, ui.min_rect().max.y + 2.0);
-        let (clicked, outside) = dropdown(ui, popup_id, anchor, INNER_W, suggestions, &[]);
-        if let Some(idx) = clicked {
-            *value = suggestions[idx].clone();
-            *popup_open = false;
-            changed = true;
-        } else if outside {
-            *popup_open = false;
-        }
-        ui.add_space((suggestions.len().min(MAX_SUGG) as f32 * ROW_H + 12.0).min(240.0));
-    }
+            if *popup_open && !suggestions.is_empty() {
+                let anchor = Pos2::new(ui.min_rect().min.x, ui.min_rect().max.y + 2.0);
+                let (clicked, outside) = dropdown(ui, popup_id, anchor, INNER_W, suggestions, &[]);
+                if let Some(idx) = clicked {
+                    *value = suggestions[idx].clone();
+                    *popup_open = false;
+                    changed = true;
+                } else if outside {
+                    *popup_open = false;
+                }
+                ui.add_space((suggestions.len().min(MAX_SUGG) as f32 * ROW_H + 12.0).min(240.0));
+            }
+        },
+    );
 
     changed
 }
@@ -321,65 +314,77 @@ fn chip_section_autocomplete(
     }
 
     let mut add_pending: Option<String> = None;
-    Frame::NONE
-        .fill(SECTION_BG)
-        .corner_radius(CornerRadius::same(8))
-        .inner_margin(Margin::symmetric(12, 0))
-        .stroke(Stroke::new(1.0, BORDER))
-        .show(ui, |ui| {
-            ui.set_min_size(Vec2::new(INNER_W - 24.0, 42.0));
-            ui.horizontal(|ui| {
-                ui.set_min_height(42.0);
-                let field = ui.add(
-                    egui::TextEdit::singleline(input)
-                        .id(popup_id.with("__field"))
-                        .hint_text(hint)
-                        .frame(Frame::NONE)
-                        .desired_width(f32::INFINITY)
-                        .text_color(C_TEXT),
-                );
-                if field.changed() {
-                    changed = true;
-                    *popup_open = !input.trim().is_empty();
-                }
-                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let t = input.trim().to_owned();
-                    let can = !t.is_empty() && !items.contains(&t);
-                    if (pill_button(ui, "Add", can) || enter) && can {
-                        add_pending = Some(t);
-                    }
+
+    ui.allocate_ui_with_layout(
+        egui::vec2(INNER_W, 42.0),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            Frame::NONE
+                .fill(SECTION_BG)
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(Margin::symmetric(12, 12))
+                .stroke(Stroke::new(1.0, BORDER))
+                .show(ui, |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let t = input.trim().to_owned();
+                        let can_add = !t.is_empty() && !items.contains(&t);
+                        let add_clicked = pill_button(ui, "Add", can_add);
+
+                        let field = ui.add(
+                            egui::TextEdit::singleline(input)
+                                .id(popup_id.with("__field"))
+                                .hint_text(hint)
+                                .frame(Frame::NONE)
+                                .desired_width(INNER_W)
+                                .text_color(C_TEXT),
+                        );
+
+                        if field.changed() {
+                            changed = true;
+                            *popup_open = !input.trim().is_empty();
+                        }
+
+                        let enter =
+                            field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                        let final_t = input.trim().to_owned();
+                        let can_final = !final_t.is_empty() && !items.contains(&final_t);
+
+                        if (add_clicked || enter) && can_final {
+                            add_pending = Some(final_t);
+                        }
+                    });
                 });
-            });
-        });
 
-    if let Some(v) = add_pending {
-        items.push(v);
-        input.clear();
-        *popup_open = false;
-        changed = true;
-    }
+            if let Some(v) = add_pending {
+                items.push(v);
+                input.clear();
+                *popup_open = false;
+                changed = true;
+            }
 
-    if *popup_open && !suggestions.is_empty() {
-        let anchor = Pos2::new(ui.min_rect().min.x, ui.min_rect().max.y + 2.0);
-        let (clicked, outside) = dropdown(
-            ui,
-            popup_id.with("__drop"),
-            anchor,
-            INNER_W,
-            suggestions,
-            items,
-        );
-        if let Some(idx) = clicked {
-            items.push(suggestions[idx].clone());
-            input.clear();
-            *popup_open = false;
-            changed = true;
-        } else if outside {
-            *popup_open = false;
-        }
-        ui.add_space((suggestions.len().min(MAX_SUGG) as f32 * ROW_H + 12.0).min(240.0));
-    }
+            if *popup_open && !suggestions.is_empty() {
+                let anchor = Pos2::new(ui.min_rect().min.x, ui.min_rect().max.y + 2.0);
+                let (clicked, outside) = dropdown(
+                    ui,
+                    popup_id.with("__drop"),
+                    anchor,
+                    INNER_W,
+                    suggestions,
+                    items,
+                );
+                if let Some(idx) = clicked {
+                    items.push(suggestions[idx].clone());
+                    input.clear();
+                    *popup_open = false;
+                    changed = true;
+                } else if outside {
+                    *popup_open = false;
+                }
+                ui.add_space((suggestions.len().min(MAX_SUGG) as f32 * ROW_H + 12.0).min(240.0));
+            }
+        },
+    );
 
     changed
 }
@@ -462,6 +467,7 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
                 .inner_margin(Margin::symmetric(20, 0))
                 .show(ui, |ui| {
                     ui.set_min_size(Vec2::new(INNER_W, 52.0));
+
                     ui.horizontal(|ui| {
                         ui.set_min_height(52.0);
                         ui.style_mut().interaction.selectable_labels = false;
@@ -520,7 +526,7 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
                         &cr_sug,
                         &mut app.modal_state.copyright_popup,
                         "e.g. Marvel, Studio Ghibli…",
-                        Id::new("mm_cr_popup"),
+                        Id::new("mm_cr"),
                     ) {
                         app.modal_state.copyright_suggestions = filter_suggestions(
                             &app.autocomplete.copyrights,
@@ -538,7 +544,7 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
                         &ar_sug,
                         &mut app.modal_state.artist_popup,
                         "Artist / creator name…",
-                        Id::new("mm_ar_popup"),
+                        Id::new("mm_ar"),
                     ) {
                         app.modal_state.artist_suggestions =
                             filter_suggestions(&app.autocomplete.artists, &app.modal_state.artist);
@@ -600,7 +606,7 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
                             .inner_margin(Margin::symmetric(12, 0))
                             .stroke(Stroke::new(1.0, BORDER))
                             .show(ui, |ui| {
-                                ui.set_min_size(Vec2::new(INNER_W, 42.0));
+                                ui.set_width(INNER_W);
                                 ui.horizontal(|ui| {
                                     ui.set_min_height(42.0);
                                     ui.add(

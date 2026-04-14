@@ -100,9 +100,20 @@ impl DbService {
             .ok();
     }
 
-    pub fn query_stats() -> Receiver<LibraryStats> {
+    pub fn query_stats_for_values(
+        copyrights: Vec<String>,
+        artists: Vec<String>,
+        tags: Vec<String>,
+    ) -> Receiver<LibraryStats> {
         let (tx, rx) = crossbeam_channel::bounded(1);
-        get_db().send(DbCommand::QueryStats { resp: tx }).ok();
+        get_db()
+            .send(DbCommand::QueryStatsForValues {
+                copyrights,
+                artists,
+                tags,
+                resp: tx,
+            })
+            .ok();
         rx
     }
 

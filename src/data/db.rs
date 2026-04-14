@@ -5,7 +5,6 @@ use crate::data::migrations::{init_schema_version, run_migrations};
 use crate::infra::config::AppConfig;
 use crate::utils::{build_search_query, map_media_item, map_staging_item};
 use rusqlite::Connection;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 const SELECT_COLS: &str = "path, name, copyright, artist, media_type, modified, characters, tags";
@@ -156,35 +155,56 @@ impl Database {
         }
     }
 
-    pub fn query_stats(&self) -> LibraryStats {
-        let top_artists: Vec<(String, u32)> = self.conn
-            .prepare("SELECT artist, COUNT(*) cnt FROM media WHERE artist != '' GROUP BY artist ORDER BY cnt DESC LIMIT 3")
-            .and_then(|mut s| s.query_map([], |r| Ok((r.get::<_,String>(0)?, r.get::<_,u32>(1)?))).map(|it| it.filter_map(Result::ok).collect()))
-            .unwrap_or_default();
-
-        let top_copyrights: Vec<(String, u32)> = self.conn
-            .prepare("SELECT copyright, COUNT(*) cnt FROM media WHERE copyright != '' GROUP BY copyright ORDER BY cnt DESC LIMIT 3")
-            .and_then(|mut s| s.query_map([], |r| Ok((r.get::<_,String>(0)?, r.get::<_,u32>(1)?))).map(|it| it.filter_map(Result::ok).collect()))
-            .unwrap_or_default();
-
-        let all_tag_strings: Vec<String> = self
-            .conn
-            .prepare("SELECT tags FROM media WHERE tags != ''")
-            .and_then(|mut s| {
-                s.query_map([], |r| r.get::<_, String>(0))
-                    .map(|it| it.filter_map(Result::ok).collect())
+    pub fn query_stats_for_values(
+        &self,
+        copyrights: &[String],
+        artists: &[String],
+        tags: &[String],
+    ) -> LibraryStats {
+        let top_copyrights: Vec<(String, u32)> = copyrights
+            .iter()
+            .filter(|v| !v.is_empty())
+            .filter_map(|cr| {
+                self.conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM media WHERE copyright = ?1",
+                        rusqlite::params![cr],
+                        |r| r.get::<_, u32>(0),
+                    )
+                    .ok()
+                    .map(|cnt| (cr.clone(), cnt))
             })
-            .unwrap_or_default();
+            .collect();
 
-        let mut tag_counts: HashMap<String, u32> = HashMap::new();
-        for ts in all_tag_strings {
-            for t in ts.split('|').map(str::trim).filter(|t| !t.is_empty()) {
-                *tag_counts.entry(t.to_owned()).or_insert(0) += 1;
-            }
-        }
-        let mut top_tags: Vec<(String, u32)> = tag_counts.into_iter().collect();
-        top_tags.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        top_tags.truncate(10);
+        let top_artists: Vec<(String, u32)> = artists
+            .iter()
+            .filter(|v| !v.is_empty())
+            .filter_map(|artist| {
+                self.conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM media WHERE artist = ?1",
+                        rusqlite::params![artist],
+                        |r| r.get::<_, u32>(0),
+                    )
+                    .ok()
+                    .map(|cnt| (artist.clone(), cnt))
+            })
+            .collect();
+
+        let top_tags: Vec<(String, u32)> = tags
+            .iter()
+            .filter(|v| !v.is_empty())
+            .filter_map(|tag| {
+                self.conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM media WHERE ('|' || tags || '|') LIKE ?1",
+                        rusqlite::params![format!("%|{}|%", tag)],
+                        |r| r.get::<_, u32>(0),
+                    )
+                    .ok()
+                    .map(|cnt| (tag.clone(), cnt))
+            })
+            .collect();
 
         LibraryStats {
             top_artists,

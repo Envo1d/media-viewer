@@ -37,8 +37,14 @@ fn start_db_worker() -> Sender<DbCommand> {
                             db.rename_media_path(&old_path, &new_path, &new_name);
                         }
 
-                        DbCommand::QueryStats { resp } => {
-                            let _ = resp.send(db.query_stats());
+                        DbCommand::QueryStatsForValues {
+                            copyrights,
+                            artists,
+                            tags,
+                            resp,
+                        } => {
+                            let _ =
+                                resp.send(db.query_stats_for_values(&copyrights, &artists, &tags));
                         }
 
                         DbCommand::Query {

@@ -171,7 +171,6 @@ impl MediaApp {
         };
 
         app.refresh_items();
-        app.request_stats();
         app.request_autocomplete();
         app.refresh_staging_items();
 
@@ -228,7 +227,7 @@ impl MediaApp {
 
         self.apply_metadata_update(&path, copyright, artist, characters, tags);
         self.modal_state.close();
-        self.request_stats();
+        self.request_stats_from_items();
         self.request_autocomplete();
     }
 
@@ -278,8 +277,38 @@ impl MediaApp {
         }
     }
 
-    fn request_stats(&mut self) {
-        self.stats_rx = Some(DbService::query_stats());
+    fn request_stats_from_items(&mut self) {
+        let n = self.displayed_items.len().min(3);
+
+        if n == 0 {
+            self.sidebar_stats = LibraryStats::default();
+            return;
+        }
+
+        let mut copyrights: Vec<String> = Vec::new();
+        let mut artists: Vec<String> = Vec::new();
+        let mut tags: Vec<String> = Vec::new();
+
+        for item in &self.displayed_items[..n] {
+            if !item.copyright.is_empty() && !copyrights.contains(&item.copyright) {
+                copyrights.push(item.copyright.clone());
+            }
+            if !item.artist.is_empty() && !artists.contains(&item.artist) {
+                artists.push(item.artist.clone());
+            }
+            for tag in &item.tags {
+                if !tag.is_empty() && !tags.contains(tag) {
+                    tags.push(tag.clone());
+                }
+            }
+        }
+
+        if copyrights.is_empty() && artists.is_empty() && tags.is_empty() {
+            self.sidebar_stats = LibraryStats::default();
+            return;
+        }
+
+        self.stats_rx = Some(DbService::query_stats_for_values(copyrights, artists, tags));
     }
     fn request_autocomplete(&mut self) {
         self.autocomplete_rx = Some(DbService::query_autocomplete());
@@ -322,7 +351,6 @@ impl MediaApp {
         if scan_finished || watch_changed {
             self.texture_manager.invalidate_prefetch();
             self.refresh_items();
-            self.request_stats();
             self.request_autocomplete();
             ctx.request_repaint();
         }
@@ -434,12 +462,19 @@ impl MediaApp {
             let remove = match rx.try_recv() {
                 Ok((resp_id, items)) => {
                     if resp_id == db_id {
+                        let is_first_page = self.displayed_items.is_empty();
+
                         if items.len() < PAGE_SIZE {
                             self.has_more = false;
                         } else {
                             self.page += 1;
                         }
                         self.displayed_items.extend(items);
+
+                        if is_first_page {
+                            self.request_stats_from_items();
+                        }
+
                         need_repaint = true;
                     }
                     self.is_loading_more = false;
@@ -589,7 +624,7 @@ impl MediaApp {
         self.modal_state.close();
 
         self.request_autocomplete();
-        self.request_stats();
+        self.request_stats_from_items();
     }
 }
 

@@ -182,7 +182,10 @@ pub enum DbCommand {
         new_name: String,
     },
 
-    QueryStats {
+    QueryStatsForValues {
+        copyrights: Vec<String>,
+        artists: Vec<String>,
+        tags: Vec<String>,
         resp: Sender<LibraryStats>,
     },
     Query {

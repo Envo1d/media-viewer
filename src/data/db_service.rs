@@ -131,6 +131,10 @@ impl DbService {
         rx
     }
 
+    pub fn delete_by_path(path: String) {
+        get_db().send(DbCommand::DeleteByPath(path)).ok();
+    }
+
     pub fn staging_delete_by_path(path: String) {
         get_db().send(DbCommand::StagingDeleteByPath(path)).ok();
     }

@@ -26,6 +26,7 @@ windows = { version = "0.62.2", features = [
 ] }
 ignore = { version = "0.4.25" }
 notify = { version = "8.2.0" }
+trash = { version = "5.2.5" }
 usvg = "0.45.1"
 
 [build-dependencies]

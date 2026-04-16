@@ -1,6 +1,6 @@
 use crate::core::models::{
     AutocompleteData, FieldFilter, LibraryStats, MediaFilter, MediaItem, MediaModalMode, MediaType,
-    ModalAction, ResolvedName, SortOrder, StagingItem, ViewMode,
+    ModalAction, PendingDelete, ResolvedName, SortOrder, StagingItem, ViewMode,
 };
 use crate::data::db_service::DbService;
 use crate::data::db_worker::init_db;
@@ -20,12 +20,16 @@ use crate::ui::texture_manager::TextureManager;
 use crate::utils::file_helpers::{build_filename_stem, move_file, resolve_conflict};
 use crossbeam_channel::Receiver;
 use eframe::Frame;
-use egui::{Context, Margin, TextureHandle, Ui};
+use egui::{
+    Context, Margin
+    , TextureHandle, Ui,
+};
 use egui_extras::image::load_image_bytes;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use trash::delete;
 
 const PAGE_SIZE: usize = 100;
 const MAX_DISPLAYED_ITEMS: usize = 5000;
@@ -80,6 +84,9 @@ pub struct MediaApp {
 
     // Unified modal
     pub modal_state: MediaModalState,
+
+    // Pending delete confirmation
+    pub pending_delete: Option<PendingDelete>,
 
     // Staging
     pub staging_items: Vec<Arc<StagingItem>>,
@@ -166,6 +173,7 @@ impl MediaApp {
             staging_items: Vec::new(),
             staging_rx: None,
             modal_state: MediaModalState::default(),
+            pending_delete: None,
             character_separator_input: character_separator,
             video_subfolder_input: video_subfolder,
         };
@@ -520,6 +528,35 @@ impl MediaApp {
         }
     }
 
+    pub fn request_delete_library(&mut self, item: Arc<MediaItem>) {
+        self.pending_delete = Some(PendingDelete::Library(item));
+    }
+
+    pub fn request_delete_staging(&mut self, item: Arc<StagingItem>) {
+        self.pending_delete = Some(PendingDelete::Staging(item));
+    }
+
+    pub fn do_delete_library(&mut self, item: Arc<MediaItem>) {
+        if let Err(e) = delete(&item.path) {
+            eprintln!("[delete] failed to move to trash {}: {e}", item.path);
+            return;
+        }
+
+        DbService::delete_by_path(item.path.clone());
+        self.displayed_items.retain(|i| i.path != item.path);
+        self.request_stats_from_items();
+    }
+
+    pub fn do_delete_staging(&mut self, item: Arc<StagingItem>) {
+        if let Err(e) = delete(&item.path) {
+            eprintln!("[delete] failed to move to trash {}: {e}", item.path);
+            return;
+        }
+
+        DbService::staging_delete_by_path(item.path.clone());
+        self.staging_items.retain(|i| i.path != item.path);
+    }
+
     pub fn open_distribute_modal(&mut self, item: Arc<StagingItem>) {
         self.modal_state.open_distribute(item, &self.autocomplete);
     }
@@ -678,6 +715,8 @@ impl eframe::App for MediaApp {
                         ModalAction::None => {}
                     }
                 }
+
+                components::delete_confirm_modal(self, ui);
 
                 egui::CentralPanel::default().show_inside(ui, |ui| match self.view_mode {
                     ViewMode::Library => components::grid_layout(self, ui),

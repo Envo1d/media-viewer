@@ -1,6 +1,6 @@
 use crate::core::models::{MediaType, StagingItem};
 use crate::ui::colors::{
-    BORDER, CARD_BG, C_BLURPLE, HOVER_TINT, INFO_BG, META_COLOR, NAME_COLOR, PLAY_BG,
+    BORDER, CARD_BG, C_BLURPLE, DANGER, HOVER_TINT, INFO_BG, META_COLOR, NAME_COLOR, PLAY_BG,
 };
 use crate::ui::texture_manager::TextureManager;
 use crate::utils::truncate;
@@ -20,6 +20,7 @@ pub fn staging_card(
     size: f32,
     show_texture: bool,
     distribute_target: &mut Option<Arc<StagingItem>>,
+    delete_request: &mut Option<Arc<StagingItem>>,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
 
@@ -27,26 +28,56 @@ pub fn staging_card(
     response.context_menu(|ui| {
         ui.set_min_width(180.0);
         ui.add_space(2.0);
-        if ui.button("  Open").clicked() {
+        if ui
+            .button("  Open")
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .clicked()
+        {
             let _ = open::that(&item.path);
             ui.close();
         }
-        if ui.button("  Show in Explorer").clicked() {
+        if ui
+            .button("  Show in Explorer")
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .clicked()
+        {
             let _ = std::process::Command::new("explorer")
                 .args(["/select,", &item.path])
                 .spawn();
             ui.close();
         }
         ui.separator();
-        if ui.button("  Distribute…").clicked() {
+        if ui
+            .button("  Distribute…")
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .clicked()
+        {
             *distribute_target = Some(Arc::clone(item));
             ui.close();
         }
         ui.separator();
-        if ui.button("  Copy path").clicked() {
+        if ui
+            .button("  Copy path")
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .clicked()
+        {
             ui.ctx().copy_text(item.path.clone());
             ui.close();
         }
+
+        ui.separator();
+
+        if ui
+            .add(egui::Button::new(
+                egui::RichText::new("  Delete file…").color(DANGER),
+            ))
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .clicked()
+        {
+            *delete_request = Some(Arc::clone(item));
+            ui.close();
+        }
+
         ui.add_space(2.0);
     });
 

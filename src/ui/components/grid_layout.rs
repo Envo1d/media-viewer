@@ -32,6 +32,7 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
     let total_rows = (total_items + columns - 1) / columns;
 
     let mut edit_request: Option<Arc<MediaItem>> = None;
+    let mut delete_request: Option<Arc<MediaItem>> = None;
 
     let out = egui::ScrollArea::vertical()
         .animated(false)
@@ -61,6 +62,7 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
                             card_sz,
                             app.show_previews,
                             &mut edit_request,
+                            &mut delete_request,
                         );
 
                         if col + 1 < columns && idx + 1 < total_items {
@@ -94,6 +96,10 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
 
     if let Some(item) = edit_request {
         app.open_edit_modal(item);
+    }
+
+    if let Some(item) = delete_request {
+        app.request_delete_library(item);
     }
 
     let scroll_y = out.state.offset.y;

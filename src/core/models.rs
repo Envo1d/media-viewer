@@ -304,3 +304,9 @@ pub enum MediaModalMode {
     Edit(Arc<MediaItem>),
     Distribute(Arc<StagingItem>),
 }
+
+// Delete Media
+pub enum PendingDelete {
+    Library(Arc<MediaItem>),
+    Staging(Arc<StagingItem>),
+}

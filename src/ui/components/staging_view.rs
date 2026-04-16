@@ -48,6 +48,7 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
     let total_rows = (total_items + columns - 1) / columns;
 
     let mut distribute_request: Option<Arc<StagingItem>> = None;
+    let mut delete_request: Option<Arc<StagingItem>> = None;
 
     egui::ScrollArea::vertical()
         .animated(false)
@@ -73,6 +74,7 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
                             card_sz,
                             app.show_previews,
                             &mut distribute_request,
+                            &mut delete_request,
                         );
 
                         if col + 1 < columns && idx + 1 < total_items {
@@ -89,5 +91,9 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
 
     if let Some(item) = distribute_request {
         app.open_distribute_modal(item);
+    }
+
+    if let Some(item) = delete_request {
+        app.request_delete_staging(item);
     }
 }

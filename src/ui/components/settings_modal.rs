@@ -11,7 +11,7 @@ use crate::ui::components::widgets::section_heading::section_heading;
 use crate::ui::components::widgets::section_row::section_row;
 use crate::ui::components::widgets::toggle::toggle;
 use crate::utils::icon;
-use egui::{Color32, Frame, Id, Margin, Rect, RichText, Sense, Vec2};
+use egui::{Color32, CursorIcon, Frame, Id, Margin, Rect, RichText, Sense, Vec2};
 use rfd::FileDialog;
 
 const MODAL_W: f32 = 460.0;
@@ -367,7 +367,8 @@ fn appearance_section(app: &mut MediaApp, ui: &mut egui::Ui) {
                 egui::Slider::new(&mut app.card_size, 120.0..=320.0)
                     .show_value(false)
                     .step_by(10.0),
-            );
+            )
+            .on_hover_cursor(CursorIcon::PointingHand);
             ui.add_space(4.0);
             ui.label(RichText::new("S").size(11.0).color(C_TEXT_MUTED));
         });

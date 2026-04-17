@@ -24,25 +24,25 @@ pub fn staging_card(
         ui.set_min_width(180.0);
         ui.add_space(2.0);
 
-        if ui.button("  Open").clicked() {
+        if ui.button("  Open").on_hover_cursor(CursorIcon::PointingHand).clicked() {
             let _ = open::that(&item.path);
             ui.close();
         }
-        if ui.button("  Show in Explorer").clicked() {
+        if ui.button("  Show in Explorer").on_hover_cursor(CursorIcon::PointingHand).clicked() {
             reveal_in_explorer(&item.path);
             ui.close();
         }
 
         ui.separator();
 
-        if ui.button("  Distribute…").clicked() {
+        if ui.button("  Distribute…").on_hover_cursor(CursorIcon::PointingHand).clicked() {
             *distribute_target = Some(Arc::clone(item));
             ui.close();
         }
 
         ui.separator();
 
-        if ui.button("  Copy path").clicked() {
+        if ui.button("  Copy path").on_hover_cursor(CursorIcon::PointingHand).clicked() {
             ui.ctx().copy_text(item.path.clone());
             ui.close();
         }
@@ -52,7 +52,7 @@ pub fn staging_card(
         if ui
             .add(egui::Button::new(
                 egui::RichText::new("  Delete file…").color(DANGER),
-            ))
+            )).on_hover_cursor(CursorIcon::PointingHand)
             .clicked()
         {
             *delete_request = Some(Arc::clone(item));

@@ -1,3 +1,4 @@
+pub mod button;
 pub mod combo_box;
 pub mod danger_button;
 pub mod filter_chip;

@@ -20,10 +20,7 @@ use crate::ui::texture_manager::TextureManager;
 use crate::utils::file_helpers::{build_filename_stem, move_file, resolve_conflict};
 use crossbeam_channel::Receiver;
 use eframe::Frame;
-use egui::{
-    Context, Margin
-    , TextureHandle, Ui,
-};
+use egui::{Context, Margin, TextureHandle, Ui};
 use egui_extras::image::load_image_bytes;
 use std::fs;
 use std::path::Path;
@@ -719,7 +716,7 @@ impl eframe::App for MediaApp {
                 components::delete_confirm_modal(self, ui);
 
                 egui::CentralPanel::default().show_inside(ui, |ui| match self.view_mode {
-                    ViewMode::Library => components::grid_layout(self, ui),
+                    ViewMode::Library => components::media_view(self, ui),
                     ViewMode::Staging => staging_view(self, ui),
                 });
             });

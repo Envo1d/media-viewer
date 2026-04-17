@@ -3,14 +3,16 @@ use crate::core::models::{
 };
 use crate::ui::app::MediaApp;
 use crate::ui::colors::{
-    BACKDROP, BORDER, CARD_BG, C_BLURPLE, C_HOVER, C_INPUT_BG, C_TEXT, C_TEXT_HEADER, C_TEXT_MUTED,
-    DANGER, SECTION_BG,
+    BORDER, C_BLURPLE, C_HOVER, C_INPUT_BG, C_TEXT, C_TEXT_HEADER, C_TEXT_MUTED, DANGER, SECTION_BG,
+};
+use crate::ui::components::modal_window::{
+    modal_backdrop, modal_frame_window, modal_header, modal_separator,
 };
 use crate::ui::components::widgets::pill_button::pill_button;
 use crate::ui::icon_registry::IconRegistry;
 use egui::{
-    Align2, Color32, CornerRadius, CursorIcon, FontId, Frame, Id, Image, Margin, Pos2, Rect,
-    RichText, Sense, Stroke, StrokeKind, Vec2,
+    Color32, CornerRadius, CursorIcon, FontId, Frame, Id, Margin, Pos2, Rect, RichText, Sense,
+    Stroke, StrokeKind, Vec2,
 };
 use std::sync::Arc;
 
@@ -389,34 +391,12 @@ fn chip_section_autocomplete(
     changed
 }
 
-fn close_button(ui: &mut egui::Ui, icons: &IconRegistry) -> bool {
-    let (rect, mut resp) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
-    if ui.is_rect_visible(rect) {
-        if resp.hovered() {
-            ui.painter().rect_filled(
-                rect,
-                7.0,
-                Color32::from_rgba_premultiplied(255, 255, 255, 12),
-            );
-        }
-        ui.put(
-            Rect::from_center_size(rect.center(), Vec2::splat(16.0)),
-            Image::new(icons.get("close"))
-                .fit_to_exact_size(Vec2::splat(16.0))
-                .tint(C_TEXT_MUTED),
-        );
-    }
-    resp = resp.on_hover_cursor(CursorIcon::PointingHand);
-    resp.clicked()
-}
-
 pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
     if !app.modal_state.is_open() {
         return ModalAction::None;
     }
 
     let ctx = ui.ctx();
-    let screen = ctx.content_rect();
     let mut action = ModalAction::None;
     let icons = app.icons.as_ref().unwrap();
 
@@ -430,233 +410,184 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
         None => return ModalAction::None,
     };
 
-    egui::Area::new(Id::new("media_modal_backdrop"))
-        .fixed_pos(Pos2::ZERO)
-        .order(egui::Order::Middle)
-        .interactable(true)
-        .show(ctx, |ui| {
-            let resp = ui.allocate_rect(screen, Sense::click());
-            ui.painter().rect_filled(screen, 0.0, BACKDROP);
-            if resp.clicked() {
-                action = ModalAction::Close;
+    if modal_backdrop(ctx, "media_modal_backdrop", egui::Order::Middle) {
+        action = ModalAction::Close;
+    }
+
+    let close_icon = icons.get("close").clone();
+
+    modal_frame_window("##media_modal", MODAL_W, None).show(ctx, |ui| {
+        ui.set_width(MODAL_W);
+
+        let name = match &app.modal_state.mode {
+            Some(MediaModalMode::Edit(item)) => {
+                let name = if item.name.len() > 56 {
+                    format!("…{}", &item.name[item.name.len() - 54..])
+                } else {
+                    item.name.clone()
+                };
+                name
             }
-        });
+            Some(MediaModalMode::Distribute(item)) => item.path.clone(),
+            None => String::new(),
+        };
 
-    egui::Window::new("##media_modal")
-        .title_bar(false)
-        .resizable(false)
-        .collapsible(false)
-        .fixed_size([MODAL_W, 0.0])
-        .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-        .frame(
-            Frame::NONE
-                .fill(CARD_BG)
-                .corner_radius(CornerRadius::same(14))
-                .stroke(Stroke::new(1.0, BORDER))
-                .shadow(egui::Shadow {
-                    offset: [0, 8],
-                    blur: 40,
-                    spread: 0,
-                    color: Color32::from_black_alpha(120),
-                }),
-        )
-        .show(ctx, |ui| {
-            ui.set_width(MODAL_W);
+        if modal_header(ui, title, Some(name), 52.0, &close_icon) {
+            action = ModalAction::Close;
+        }
 
-            Frame::NONE
-                .inner_margin(Margin::symmetric(20, 0))
-                .show(ui, |ui| {
-                    ui.set_min_size(Vec2::new(INNER_W, 52.0));
+        modal_separator(ui);
 
-                    ui.horizontal(|ui| {
-                        ui.set_min_height(52.0);
-                        ui.style_mut().interaction.selectable_labels = false;
-                        ui.label(
-                            RichText::new(title)
-                                .size(16.0)
-                                .color(C_TEXT_HEADER)
-                                .strong(),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if close_button(ui, icons) {
-                                action = ModalAction::Close;
-                            }
-                        });
-                    });
+        Frame::NONE
+            .inner_margin(Margin::symmetric(20, 16))
+            .show(ui, |ui| {
+                ui.set_width(INNER_W);
+                ui.style_mut().interaction.selectable_labels = false;
 
-                    ui.style_mut().interaction.selectable_labels = false;
-                    match &app.modal_state.mode {
-                        Some(MediaModalMode::Edit(item)) => {
-                            let name = if item.name.len() > 56 {
-                                format!("…{}", &item.name[item.name.len() - 54..])
-                            } else {
-                                item.name.clone()
-                            };
-                            ui.label(RichText::new(name).size(10.5).color(C_TEXT_MUTED));
-                        }
-                        Some(MediaModalMode::Distribute(item)) => {
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(&item.path).size(10.0).color(C_TEXT_MUTED),
-                                )
-                                .wrap(),
-                            );
-                        }
-                        None => {}
-                    }
-                    ui.add_space(8.0);
-                });
+                ui.label(RichText::new("COPYRIGHT").size(10.5).color(C_TEXT_MUTED));
+                ui.add_space(6.0);
+                let cr_sug = app.modal_state.copyright_suggestions.clone();
+                if autocomplete_single(
+                    ui,
+                    &mut app.modal_state.copyright,
+                    &cr_sug,
+                    &mut app.modal_state.copyright_popup,
+                    "e.g. Marvel, Studio Ghibli…",
+                    Id::new("mm_cr"),
+                ) {
+                    app.modal_state.copyright_suggestions = filter_suggestions(
+                        &app.autocomplete.copyrights,
+                        &app.modal_state.copyright,
+                    );
+                }
+                ui.add_space(14.0);
 
-            let (sep, _) =
-                ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
-            ui.painter().rect_filled(sep, 0.0, BORDER);
+                ui.label(RichText::new("ARTIST").size(10.5).color(C_TEXT_MUTED));
+                ui.add_space(6.0);
+                let ar_sug = app.modal_state.artist_suggestions.clone();
+                if autocomplete_single(
+                    ui,
+                    &mut app.modal_state.artist,
+                    &ar_sug,
+                    &mut app.modal_state.artist_popup,
+                    "Artist / creator name…",
+                    Id::new("mm_ar"),
+                ) {
+                    app.modal_state.artist_suggestions =
+                        filter_suggestions(&app.autocomplete.artists, &app.modal_state.artist);
+                }
+                ui.add_space(14.0);
 
-            Frame::NONE
-                .inner_margin(Margin::symmetric(20, 16))
-                .show(ui, |ui| {
-                    ui.set_width(INNER_W);
+                ui.label(RichText::new("CHARACTERS").size(10.5).color(C_TEXT_MUTED));
+                ui.add_space(6.0);
+                let ch_sug = app.modal_state.char_suggestions.clone();
+                if chip_section_autocomplete(
+                    ui,
+                    &mut app.modal_state.characters,
+                    &mut app.modal_state.chars_input,
+                    &ch_sug,
+                    &mut app.modal_state.chars_popup,
+                    Color32::from_rgb(140, 100, 230),
+                    "Add a character…",
+                    "No characters — add one below.",
+                    Id::new("mm_chars"),
+                    icons,
+                ) {
+                    app.modal_state.char_suggestions = filter_suggestions(
+                        &app.autocomplete.characters,
+                        &app.modal_state.chars_input,
+                    );
+                }
+                ui.add_space(14.0);
 
-                    ui.style_mut().interaction.selectable_labels = false;
-                    ui.label(RichText::new("COPYRIGHT").size(10.5).color(C_TEXT_MUTED));
+                ui.label(RichText::new("TAGS").size(10.5).color(C_TEXT_MUTED));
+                ui.add_space(6.0);
+                let tg_sug = app.modal_state.tag_suggestions.clone();
+                if chip_section_autocomplete(
+                    ui,
+                    &mut app.modal_state.tags,
+                    &mut app.modal_state.tags_input,
+                    &tg_sug,
+                    &mut app.modal_state.tags_popup,
+                    C_BLURPLE,
+                    "Add a tag…",
+                    "No tags — add one below.",
+                    Id::new("mm_tags"),
+                    icons,
+                ) {
+                    app.modal_state.tag_suggestions =
+                        filter_suggestions(&app.autocomplete.tags, &app.modal_state.tags_input);
+                }
+                ui.add_space(14.0);
+
+                if is_distribute && is_video {
+                    ui.label(
+                        RichText::new("VIDEO TITLE (optional)")
+                            .size(10.5)
+                            .color(C_TEXT_MUTED),
+                    );
                     ui.add_space(6.0);
-                    let cr_sug = app.modal_state.copyright_suggestions.clone();
-                    if autocomplete_single(
-                        ui,
-                        &mut app.modal_state.copyright,
-                        &cr_sug,
-                        &mut app.modal_state.copyright_popup,
-                        "e.g. Marvel, Studio Ghibli…",
-                        Id::new("mm_cr"),
-                    ) {
-                        app.modal_state.copyright_suggestions = filter_suggestions(
-                            &app.autocomplete.copyrights,
-                            &app.modal_state.copyright,
-                        );
-                    }
-                    ui.add_space(14.0);
 
-                    ui.label(RichText::new("ARTIST").size(10.5).color(C_TEXT_MUTED));
-                    ui.add_space(6.0);
-                    let ar_sug = app.modal_state.artist_suggestions.clone();
-                    if autocomplete_single(
-                        ui,
-                        &mut app.modal_state.artist,
-                        &ar_sug,
-                        &mut app.modal_state.artist_popup,
-                        "Artist / creator name…",
-                        Id::new("mm_ar"),
-                    ) {
-                        app.modal_state.artist_suggestions =
-                            filter_suggestions(&app.autocomplete.artists, &app.modal_state.artist);
-                    }
-                    ui.add_space(14.0);
-
-                    ui.label(RichText::new("CHARACTERS").size(10.5).color(C_TEXT_MUTED));
-                    ui.add_space(6.0);
-                    let ch_sug = app.modal_state.char_suggestions.clone();
-                    if chip_section_autocomplete(
-                        ui,
-                        &mut app.modal_state.characters,
-                        &mut app.modal_state.chars_input,
-                        &ch_sug,
-                        &mut app.modal_state.chars_popup,
-                        Color32::from_rgb(140, 100, 230),
-                        "Add a character…",
-                        "No characters — add one below.",
-                        Id::new("mm_chars"),
-                        icons,
-                    ) {
-                        app.modal_state.char_suggestions = filter_suggestions(
-                            &app.autocomplete.characters,
-                            &app.modal_state.chars_input,
-                        );
-                    }
-                    ui.add_space(14.0);
-
-                    ui.label(RichText::new("TAGS").size(10.5).color(C_TEXT_MUTED));
-                    ui.add_space(6.0);
-                    let tg_sug = app.modal_state.tag_suggestions.clone();
-                    if chip_section_autocomplete(
-                        ui,
-                        &mut app.modal_state.tags,
-                        &mut app.modal_state.tags_input,
-                        &tg_sug,
-                        &mut app.modal_state.tags_popup,
-                        C_BLURPLE,
-                        "Add a tag…",
-                        "No tags — add one below.",
-                        Id::new("mm_tags"),
-                        icons,
-                    ) {
-                        app.modal_state.tag_suggestions =
-                            filter_suggestions(&app.autocomplete.tags, &app.modal_state.tags_input);
-                    }
-                    ui.add_space(14.0);
-
-                    if is_distribute && is_video {
-                        ui.label(
-                            RichText::new("VIDEO TITLE (optional)")
-                                .size(10.5)
-                                .color(C_TEXT_MUTED),
-                        );
-                        ui.add_space(6.0);
-                        Frame::NONE
-                            .fill(SECTION_BG)
-                            .corner_radius(CornerRadius::same(8))
-                            .inner_margin(Margin::symmetric(12, 0))
-                            .stroke(Stroke::new(1.0, BORDER))
-                            .show(ui, |ui| {
-                                ui.set_width(INNER_W);
-                                ui.horizontal(|ui| {
-                                    ui.set_min_height(42.0);
-                                    ui.add(
-                                        egui::TextEdit::singleline(
-                                            &mut app.modal_state.video_title,
-                                        )
-                                        .hint_text("Leave empty to use original filename…")
-                                        .frame(Frame::NONE)
-                                        .desired_width(f32::INFINITY)
-                                        .text_color(C_TEXT),
-                                    );
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(INNER_W, 42.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            Frame::NONE
+                                .fill(SECTION_BG)
+                                .corner_radius(CornerRadius::same(8))
+                                .inner_margin(Margin::symmetric(12, 0))
+                                .stroke(Stroke::new(1.0, BORDER))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.set_min_height(42.0);
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut app.modal_state.video_title,
+                                            )
+                                            .hint_text("Leave empty to use original filename…")
+                                            .frame(Frame::NONE)
+                                            .desired_width(f32::INFINITY)
+                                            .text_color(C_TEXT),
+                                        );
+                                    });
                                 });
-                            });
-                        ui.add_space(14.0);
+                        },
+                    );
+                    ui.add_space(14.0);
+                }
+
+                if let Some(err) = &app.modal_state.error.clone() {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!("⚠ {err}")).size(11.0).color(DANGER),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(10.0);
+                }
+
+                modal_separator(ui);
+                ui.add_space(12.0);
+
+                ui.horizontal(|ui| {
+                    if pill_button(ui, "Cancel", true) {
+                        action = ModalAction::Close;
                     }
-
-                    if let Some(err) = &app.modal_state.error.clone() {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(format!("⚠ {err}")).size(11.0).color(DANGER),
-                            )
-                            .wrap(),
-                        );
-                        ui.add_space(10.0);
-                    }
-
-                    let (fsep, _) = ui
-                        .allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
-                    ui.painter().rect_filled(fsep, 0.0, BORDER);
-                    ui.add_space(12.0);
-
-                    ui.horizontal(|ui| {
-                        if pill_button(ui, "Cancel", true) {
-                            action = ModalAction::Close;
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let ok = app.modal_state.is_valid();
+                        let label = if is_distribute { "Distribute" } else { "Save" };
+                        if pill_button(ui, label, ok) && ok {
+                            action = if is_distribute {
+                                ModalAction::Distribute
+                            } else {
+                                ModalAction::SaveEdit
+                            };
                         }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let ok = app.modal_state.is_valid();
-                            let label = if is_distribute { "Distribute" } else { "Save" };
-                            if pill_button(ui, label, ok) && ok {
-                                action = if is_distribute {
-                                    ModalAction::Distribute
-                                } else {
-                                    ModalAction::SaveEdit
-                                };
-                            }
-                        });
                     });
-                    ui.add_space(4.0);
                 });
-        });
+                ui.add_space(4.0);
+            });
+    });
 
     action
 }

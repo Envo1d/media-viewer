@@ -1,35 +1,19 @@
 use crate::core::models::MediaItem;
 use crate::ui::app::MediaApp;
+use crate::ui::components::grid_view::{
+    compute_grid_metrics, BOTTOM_PAD, COL_GAP, ROW_GAP, TOP_PAD,
+};
 use crate::ui::components::media_card::media_card;
 use egui::{Ui, Vec2};
 use std::sync::Arc;
 
-const SIDE_PAD: f32 = 18.0;
-const COL_GAP: f32 = 10.0;
-const ROW_GAP: f32 = 10.0;
 const PREFETCH_MARGIN: usize = 2;
 const LOAD_AHEAD_PX: f32 = 1200.0;
-const TOP_PAD: f32 = 12.0;
-const BOTTOM_PAD: f32 = 28.0;
 
-pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
+pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
     let card_sz = app.card_size;
-    let avail_w = ui.available_width();
-
-    let usable_w = (avail_w - SIDE_PAD * 2.0).max(card_sz);
-
-    let columns = ((usable_w + COL_GAP) / (card_sz + COL_GAP))
-        .floor()
-        .max(1.0) as usize;
-
-    let grid_w = columns as f32 * card_sz + (columns - 1) as f32 * COL_GAP;
-
-    let h_pad = SIDE_PAD + ((usable_w - grid_w) * 0.5).max(0.0);
-
-    let row_h = card_sz + ROW_GAP;
-
     let total_items = app.displayed_items.len();
-    let total_rows = (total_items + columns - 1) / columns;
+    let m = compute_grid_metrics(ui.available_width(), total_items, card_sz);
 
     let mut edit_request: Option<Arc<MediaItem>> = None;
     let mut delete_request: Option<Arc<MediaItem>> = None;
@@ -37,20 +21,20 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
     let out = egui::ScrollArea::vertical()
         .animated(false)
         .wheel_scroll_multiplier(Vec2::splat(2.5))
-        .show_rows(ui, row_h, total_rows, |ui, row_range| {
+        .show_rows(ui, m.row_h, m.total_rows, |ui, row_range| {
             if row_range.start == 0 {
                 ui.add_space(TOP_PAD);
             }
 
-            let vis_start = row_range.start * columns;
-            let vis_end = (row_range.end * columns).min(total_items);
+            let vis_start = row_range.start * m.columns;
+            let vis_end = (row_range.end * m.columns).min(total_items);
 
             for row in row_range.clone() {
                 ui.horizontal(|ui| {
-                    ui.add_space(h_pad);
+                    ui.add_space(m.h_pad);
 
-                    for col in 0..columns {
-                        let idx = row * columns + col;
+                    for col in 0..m.columns {
+                        let idx = row * m.columns + col;
                         let Some(item) = app.displayed_items.get(idx) else {
                             break;
                         };
@@ -65,12 +49,12 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
                             &mut delete_request,
                         );
 
-                        if col + 1 < columns && idx + 1 < total_items {
+                        if col + 1 < m.columns && idx + 1 < total_items {
                             ui.add_space(COL_GAP);
                         }
                     }
 
-                    ui.add_space(h_pad);
+                    ui.add_space(m.h_pad);
                 });
 
                 ui.add_space(ROW_GAP);
@@ -78,15 +62,14 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
 
             ui.add_space(BOTTOM_PAD);
 
-            let pre_start = row_range.start.saturating_sub(PREFETCH_MARGIN) * columns;
-            let pre_end = (row_range.end + PREFETCH_MARGIN).min(total_rows) * columns;
+            let pre_start = row_range.start.saturating_sub(PREFETCH_MARGIN) * m.columns;
+            let pre_end = (row_range.end + PREFETCH_MARGIN).min(m.total_rows) * m.columns;
 
             for idx in pre_start..vis_start {
                 if let Some(item) = app.displayed_items.get(idx) {
                     app.texture_manager.prefetch(&item.path);
                 }
             }
-
             for idx in vis_end..pre_end.min(total_items) {
                 if let Some(item) = app.displayed_items.get(idx) {
                     app.texture_manager.prefetch(&item.path);
@@ -97,7 +80,6 @@ pub fn grid_layout(app: &mut MediaApp, ui: &mut Ui) {
     if let Some(item) = edit_request {
         app.open_edit_modal(item);
     }
-
     if let Some(item) = delete_request {
         app.request_delete_library(item);
     }

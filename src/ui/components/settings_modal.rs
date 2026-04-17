@@ -1,7 +1,8 @@
 use crate::infra::config::AppConfig;
 use crate::ui::app::MediaApp;
-use crate::ui::colors::{
-    BACKDROP, BORDER, CARD_BG, C_BLURPLE, C_INPUT_BG, C_TEXT, C_TEXT_HEADER, C_TEXT_MUTED, DANGER,
+use crate::ui::colors::{C_BLURPLE, C_INPUT_BG, C_TEXT, C_TEXT_MUTED, DANGER};
+use crate::ui::components::modal_window::{
+    modal_backdrop, modal_frame_window, modal_header, modal_separator,
 };
 use crate::ui::components::widgets::combo_box::combo_box;
 use crate::ui::components::widgets::danger_button::danger_button;
@@ -10,10 +11,7 @@ use crate::ui::components::widgets::section_heading::section_heading;
 use crate::ui::components::widgets::section_row::section_row;
 use crate::ui::components::widgets::toggle::toggle;
 use crate::utils::icon;
-use egui::{
-    Align2, Color32, CornerRadius, CursorIcon, Frame, Id, Image, Margin, Pos2, Rect, RichText,
-    Sense, Stroke, Vec2,
-};
+use egui::{Color32, Frame, Id, Margin, Rect, RichText, Sense, Vec2};
 use rfd::FileDialog;
 
 const MODAL_W: f32 = 460.0;
@@ -216,11 +214,7 @@ fn structure_section(app: &mut MediaApp, ui: &mut egui::Ui, rescan_requested: &m
     section_row(ui, false, false, |ui| {
         ui.vertical(|ui| {
             ui.add_space(12.0);
-            ui.label(
-                RichText::new("Video subfolder name")
-                    .size(12.5)
-                    .color(C_TEXT),
-            );
+            ui.label(RichText::new("Video subfolder name").size(12.5).color(C_TEXT));
             ui.label(
                 RichText::new(
                     "Subfolder inside <artist>/ where videos are placed.\nLeave blank to place videos alongside images.",
@@ -235,11 +229,9 @@ fn structure_section(app: &mut MediaApp, ui: &mut egui::Ui, rescan_requested: &m
                     .desired_width(80.0)
                     .hint_text("Videos"),
             );
-
             if resp.changed() {
                 app.config.video_subfolder = app.video_subfolder_input.clone();
             }
-
             if resp.lost_focus() {
                 let _ = app.config.save();
             }
@@ -453,127 +445,57 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
     }
 
     let ctx = ui.ctx();
-    let screen = ctx.content_rect();
     let mut close = false;
     let mut rescan_requested = false;
 
-    egui::Area::new(Id::new("settings_backdrop"))
-        .fixed_pos(Pos2::ZERO)
-        .order(egui::Order::Middle)
-        .interactable(true)
-        .show(ctx, |ui| {
-            let resp = ui.allocate_rect(screen, Sense::click());
-            ui.painter().rect_filled(screen, 0.0, BACKDROP);
-            if resp.clicked() {
-                close = true;
-            }
-        });
+    if modal_backdrop(ctx, "settings_backdrop", egui::Order::Middle) {
+        close = true;
+    }
 
-    egui::Window::new("##settings_modal")
-        .title_bar(false)
-        .resizable(false)
-        .collapsible(false)
-        .fixed_size([MODAL_W, MODAL_H])
-        .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-        .frame(
-            Frame::NONE
-                .fill(CARD_BG)
-                .corner_radius(CornerRadius::same(14))
-                .stroke(Stroke::new(1.0, BORDER))
-                .shadow(egui::Shadow {
-                    offset: [0, 8],
-                    blur: 40,
-                    spread: 0,
-                    color: Color32::from_black_alpha(120),
-                }),
-        )
-        .show(ctx, |ui| {
-            ui.set_width(MODAL_W);
+    modal_frame_window("##settings_modal", MODAL_W, Some(MODAL_H)).show(ctx, |ui| {
+        ui.set_width(MODAL_W);
 
-            Frame::NONE
-                .inner_margin(Margin::symmetric(20, 0))
-                .show(ui, |ui| {
-                    ui.set_min_size(Vec2::new(MODAL_W - 40.0, 56.0));
+        let close_icon = app.icons.as_ref().unwrap().get("close").clone();
 
-                    ui.horizontal(|ui| {
-                        ui.set_min_height(56.0);
-                        ui.style_mut().interaction.selectable_labels = false;
-                        ui.label(
-                            RichText::new("Settings")
-                                .size(16.0)
-                                .color(C_TEXT_HEADER)
-                                .strong(),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let (rect, mut resp) =
-                                ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
-                            if ui.is_rect_visible(rect) {
-                                if resp.hovered() {
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        7.0,
-                                        Color32::from_rgba_premultiplied(255, 255, 255, 12),
-                                    );
-                                }
-                                let close_icon = app.icons.as_ref().unwrap().get("close");
-                                let icon_rect =
-                                    Rect::from_center_size(rect.center(), Vec2::splat(16.0));
-                                ui.put(
-                                    icon_rect,
-                                    Image::new(close_icon)
-                                        .fit_to_exact_size(Vec2::splat(16.0))
-                                        .tint(C_TEXT_MUTED),
-                                );
-                            }
-                            resp = resp.on_hover_cursor(CursorIcon::PointingHand);
+        close = modal_header(ui, "Settings", None, 56.0, &close_icon);
 
-                            if resp.clicked() {
-                                close = true;
-                            }
-                        });
-                    });
-                });
+        modal_separator(ui);
 
-            let (sep, _) = ui.allocate_exact_size(Vec2::new(MODAL_W, 1.0), Sense::hover());
-            ui.painter().rect_filled(sep, 0.0, BORDER);
+        Frame::NONE
+            .inner_margin(Margin::symmetric(18, 4))
+            .show(ui, |ui| {
+                ui.set_width(MODAL_W - 36.0);
 
-            Frame::NONE
-                .inner_margin(Margin::symmetric(18, 4))
-                .show(ui, |ui| {
-                    ui.set_width(MODAL_W - 36.0);
-
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false; 2])
-                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                        .animated(false)
-                        .show(ui, |ui| {
-                            library_section(app, ui);
-                            structure_section(app, ui, &mut rescan_requested);
-                            indexing_section(app, ui);
-                            appearance_section(app, ui);
-                            cache_section(app, ui);
-                        });
-
-                    ui.add_space(18.0);
-                    let (fsep, _) =
-                        ui.allocate_exact_size(Vec2::new(MODAL_W - 36.0, 1.0), Sense::hover());
-                    ui.painter().rect_filled(fsep, 0.0, BORDER);
-                    ui.add_space(12.0);
-
-                    ui.horizontal(|ui| {
-                        ui.style_mut().interaction.selectable_labels = false;
-                        ui.label(RichText::new("Nexa").size(11.0).color(C_TEXT_MUTED));
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
-                                .size(11.0)
-                                .color(C_TEXT_MUTED),
-                        );
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .animated(false)
+                    .show(ui, |ui| {
+                        library_section(app, ui);
+                        structure_section(app, ui, &mut rescan_requested);
+                        indexing_section(app, ui);
+                        appearance_section(app, ui);
+                        cache_section(app, ui);
                     });
 
-                    ui.add_space(12.0);
+                ui.add_space(18.0);
+                modal_separator(ui);
+                ui.add_space(12.0);
+
+                ui.horizontal(|ui| {
+                    ui.style_mut().interaction.selectable_labels = false;
+                    ui.label(RichText::new("Nexa").size(11.0).color(C_TEXT_MUTED));
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                            .size(11.0)
+                            .color(C_TEXT_MUTED),
+                    );
                 });
-        });
+
+                ui.add_space(12.0);
+            });
+    });
 
     if rescan_requested {
         app.rescan();

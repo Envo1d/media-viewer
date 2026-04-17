@@ -154,3 +154,9 @@ pub fn move_file(src: &Path, dst: &Path) -> std::io::Result<()> {
         }
     }
 }
+
+pub fn reveal_in_explorer(path: &str) {
+    let _ = std::process::Command::new("explorer")
+        .args(["/select,", path])
+        .spawn();
+}

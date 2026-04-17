@@ -22,7 +22,7 @@ pub fn delete_confirm_modal(app: &mut MediaApp, ui: &egui::Ui) {
     let dir_path = Path::new(&path_preview)
         .parent()
         .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| "".to_string());
+        .unwrap_or_default();
 
     let shown_path = if dir_path.len() > 60 {
         format!("…{}", &dir_path[dir_path.len() - 58..])

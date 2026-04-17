@@ -6,6 +6,7 @@ use crate::data::db_service::DbService;
 use crate::data::db_worker::init_db;
 use crate::infra::cache;
 use crate::infra::config::AppConfig;
+use crate::infra::window_effects::WindowEffects;
 use crate::ui::colors::C_PRIMARY_BG;
 use crate::ui::components;
 use crate::ui::components::media_modal::{media_modal, MediaModalState};
@@ -30,6 +31,7 @@ use trash::delete;
 
 const PAGE_SIZE: usize = 100;
 const MAX_DISPLAYED_ITEMS: usize = 5000;
+const WINDOW_CR: u8 = 12;
 
 pub struct MediaApp {
     // Core
@@ -88,6 +90,9 @@ pub struct MediaApp {
     // Staging
     pub staging_items: Vec<Arc<StagingItem>>,
     staging_rx: Option<Receiver<Vec<Arc<StagingItem>>>>,
+
+    // Windows rounded-window helpers
+    pub window_fx: WindowEffects,
 }
 
 impl MediaApp {
@@ -173,6 +178,8 @@ impl MediaApp {
             pending_delete: None,
             character_separator_input: character_separator,
             video_subfolder_input: video_subfolder,
+
+            window_fx: WindowEffects::new(),
         };
 
         app.refresh_items();
@@ -315,6 +322,7 @@ impl MediaApp {
 
         self.stats_rx = Some(DbService::query_stats_for_values(copyrights, artists, tags));
     }
+
     fn request_autocomplete(&mut self) {
         self.autocomplete_rx = Some(DbService::query_autocomplete());
     }
@@ -664,6 +672,8 @@ impl MediaApp {
 
 impl eframe::App for MediaApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
+        self.window_fx.apply();
+
         let ctx = ui.ctx().clone();
 
         self.poll_db(&ctx);
@@ -683,8 +693,8 @@ impl eframe::App for MediaApp {
             .show_inside(ui, |ui| {
                 egui::Panel::top("custom_bar")
                     .frame(egui::Frame::NONE.corner_radius(egui::CornerRadius {
-                        nw: 20,
-                        ne: 20,
+                        nw: WINDOW_CR,
+                        ne: WINDOW_CR,
                         sw: 0,
                         se: 0,
                     }))
@@ -720,5 +730,9 @@ impl eframe::App for MediaApp {
                     ViewMode::Staging => staging_view(self, ui),
                 });
             });
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
     }
 }

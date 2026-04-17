@@ -18,12 +18,7 @@ directories = { version = "6.0.0" }
 twox-hash = { version = "2.1.2" }
 crossbeam-channel = { version = "0.5.15" }
 num_cpus = { version = "1.17.0" }
-windows = { version = "0.62.2", features = [
-    "Win32_Foundation",
-    "Win32_Graphics_Gdi",
-    "Win32_UI_Shell",
-    "Win32_System_Com",
-] }
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_Com", "Win32_Graphics_Dwm", "Win32_UI_Controls"] }
 ignore = { version = "0.4.25" }
 notify = { version = "8.2.0" }
 trash = { version = "5.2.5" }

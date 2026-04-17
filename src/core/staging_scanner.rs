@@ -115,10 +115,10 @@ impl StagingScanner {
             .run(|| {
                 let tx = item_tx.clone();
                 Box::new(move |result| {
-                    if let Ok(entry) = result {
-                        if let Some(item) = build_staging_item(entry.path()) {
-                            tx.send(item).ok();
-                        }
+                    if let Ok(entry) = result
+                        && let Some(item) = build_staging_item(entry.path())
+                    {
+                        tx.send(item).ok();
                     }
                     ignore::WalkState::Continue
                 })

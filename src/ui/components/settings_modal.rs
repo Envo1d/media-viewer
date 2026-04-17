@@ -77,7 +77,7 @@ fn library_section(app: &mut MediaApp, ui: &mut egui::Ui) {
                 };
                 if let Some(folder) = FileDialog::new().set_directory(start).pick_folder() {
                     app.root_path = folder.to_string_lossy().to_string();
-                    app.config.library_path = Some(folder.into());
+                    app.config.library_path = Some(folder);
                     let _ = app.config.save();
                 }
             }

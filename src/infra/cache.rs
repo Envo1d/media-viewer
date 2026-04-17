@@ -2,12 +2,12 @@ use crate::core::windows_thumb::get_thumbnail;
 use image::RgbaImage;
 use std::fs;
 use std::hash::Hasher;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use twox_hash::XxHash64;
 use webp::Encoder;
 
-fn preview_cache_path(cache_dir: &PathBuf, file_path: &str) -> PathBuf {
+fn preview_cache_path(cache_dir: &Path, file_path: &str) -> PathBuf {
     let mut hasher = XxHash64::with_seed(0);
 
     hasher.write(file_path.as_bytes());
@@ -17,7 +17,7 @@ fn preview_cache_path(cache_dir: &PathBuf, file_path: &str) -> PathBuf {
     cache_dir.join(hash)
 }
 
-fn save_as_webp_lossy(path: &PathBuf, img: &RgbaImage, quality: f32) {
+fn save_as_webp_lossy(path: &Path, img: &RgbaImage, quality: f32) {
     let encoder = Encoder::from_rgba(img, img.width(), img.height());
 
     let quality = quality.clamp(0.0, 100.0);
@@ -27,7 +27,7 @@ fn save_as_webp_lossy(path: &PathBuf, img: &RgbaImage, quality: f32) {
     let _ = fs::write(path, &*webp_data);
 }
 
-pub fn load_or_generate(cache_dir: &PathBuf, path: &str, thumb_size: u32) -> Option<RgbaImage> {
+pub fn load_or_generate(cache_dir: &Path, path: &str, thumb_size: u32) -> Option<RgbaImage> {
     let cache_path = preview_cache_path(cache_dir, path);
 
     if let Ok(data) = fs::read(&cache_path) {

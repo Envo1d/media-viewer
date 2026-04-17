@@ -20,7 +20,7 @@ fn hbitmap_to_rgba(hbitmap: HBITMAP) -> Option<RgbaImage> {
         }
 
         let width = bmp.bmWidth as u32;
-        let height = bmp.bmHeight.abs() as u32;
+        let height = bmp.bmHeight.unsigned_abs();
 
         let mut bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {

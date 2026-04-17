@@ -80,13 +80,10 @@ pub fn modal_header(
                 });
             });
 
-            match subtitle {
-                Some(s) => {
-                    ui.style_mut().interaction.selectable_labels = false;
-                    ui.label(RichText::new(s).size(10.5).color(C_TEXT_MUTED));
-                    ui.add_space(8.0);
-                }
-                _ => {}
+            if let Some(s) = subtitle {
+                ui.style_mut().interaction.selectable_labels = false;
+                ui.label(RichText::new(s).size(10.5).color(C_TEXT_MUTED));
+                ui.add_space(8.0);
             }
         });
     close_clicked

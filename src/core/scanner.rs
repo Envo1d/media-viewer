@@ -81,12 +81,11 @@ impl MediaScanner {
                 let char_sep = char_sep.clone();
 
                 Box::new(move |result| {
-                    if let Ok(entry) = result {
-                        if let Some(item) =
+                    if let Ok(entry) = result
+                        && let Some(item) =
                             build_media_item(&root, entry.path(), &mapping, &char_sep)
-                        {
-                            tx.send(item).ok();
-                        }
+                    {
+                        tx.send(item).ok();
                     }
                     ignore::WalkState::Continue
                 })

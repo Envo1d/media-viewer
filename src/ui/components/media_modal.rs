@@ -100,8 +100,8 @@ fn filter_suggestions(list: &[String], query: &str) -> Vec<String> {
     }
     list.iter()
         .filter(|s| s.to_lowercase().contains(&q))
-        .cloned()
         .take(MAX_SUGG)
+        .cloned()
         .collect()
 }
 
@@ -421,12 +421,11 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
 
         let name = match &app.modal_state.mode {
             Some(MediaModalMode::Edit(item)) => {
-                let name = if item.name.len() > 56 {
+                if item.name.len() > 56 {
                     format!("…{}", &item.name[item.name.len() - 54..])
                 } else {
                     item.name.clone()
-                };
-                name
+                }
             }
             Some(MediaModalMode::Distribute(item)) => item.path.clone(),
             None => String::new(),

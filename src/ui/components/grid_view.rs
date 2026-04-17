@@ -19,7 +19,7 @@ pub fn compute_grid_metrics(avail_w: f32, total_items: usize, card_sz: f32) -> G
     let grid_w = columns as f32 * card_sz + (columns - 1) as f32 * COL_GAP;
     let h_pad = SIDE_PAD + ((usable_w - grid_w) * 0.5).max(0.0);
     let row_h = card_sz + ROW_GAP;
-    let total_rows = (total_items + columns - 1) / columns;
+    let total_rows = total_items.div_ceil(columns);
     GridMetrics {
         columns,
         h_pad,

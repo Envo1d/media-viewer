@@ -38,29 +38,49 @@ pub fn media_card(
         ui.set_min_width(190.0);
         ui.add_space(2.0);
 
-        if ui.button("  Open").on_hover_cursor(CursorIcon::PointingHand).clicked() {
+        if ui
+            .button("  Open")
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .clicked()
+        {
             let _ = open::that(&item.path);
             ui.close();
         }
-        if ui.button("  Show in Explorer").on_hover_cursor(CursorIcon::PointingHand).clicked() {
+        if ui
+            .button("  Show in Explorer")
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .clicked()
+        {
             reveal_in_explorer(&item.path);
             ui.close();
         }
 
         ui.separator();
 
-        if ui.button("  Edit metadata").on_hover_cursor(CursorIcon::PointingHand).clicked() {
+        if ui
+            .button("  Edit metadata")
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .clicked()
+        {
             *edit_target = Some(Arc::clone(item));
             ui.close();
         }
 
         ui.separator();
 
-        if ui.button("  Copy path").on_hover_cursor(CursorIcon::PointingHand).clicked() {
+        if ui
+            .button("  Copy path")
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .clicked()
+        {
             ui.ctx().copy_text(item.path.clone());
             ui.close();
         }
-        if ui.button("  Copy filename").on_hover_cursor(CursorIcon::PointingHand).clicked() {
+        if ui
+            .button("  Copy filename")
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .clicked()
+        {
             ui.ctx().copy_text(item.name.clone());
             ui.close();
         }
@@ -70,7 +90,8 @@ pub fn media_card(
         if ui
             .add(egui::Button::new(
                 egui::RichText::new("  Delete file…").color(DANGER),
-            )).on_hover_cursor(CursorIcon::PointingHand)
+            ))
+            .on_hover_cursor(CursorIcon::PointingHand)
             .clicked()
         {
             *delete_request = Some(Arc::clone(item));
@@ -123,7 +144,7 @@ pub fn media_card(
     }
 
     draw_info_bar(&inner, rect, &item.name, size);
-    draw_card_border(&outer, rect, is_hovered);
+    draw_card_border(outer, rect, is_hovered);
 
     response
 }

@@ -23,15 +23,17 @@ use crossbeam_channel::Receiver;
 use eframe::Frame;
 use egui::{Context, Margin, TextureHandle, Ui};
 use egui_extras::image::load_image_bytes;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use trash::delete;
 
-const PAGE_SIZE: usize = 100;
+const PAGE_SIZE: usize = 200;
 const MAX_DISPLAYED_ITEMS: usize = 5000;
 const WINDOW_CR: u8 = 12;
+const AUTOCOMPLETE_DEBOUNCE: Duration = Duration::from_secs(30);
 
 pub struct MediaApp {
     // Core
@@ -56,6 +58,7 @@ pub struct MediaApp {
     // Data – main library
     pub scan_manager: ScanManager,
     pub displayed_items: Vec<Arc<MediaItem>>,
+    displayed_index: HashMap<String, usize>,
 
     // Sidebar statistics
     pub sidebar_stats: LibraryStats,
@@ -64,6 +67,8 @@ pub struct MediaApp {
     // Autocomplete data for the distribute modal
     pub autocomplete: AutocompleteData,
     autocomplete_rx: Option<Receiver<AutocompleteData>>,
+    autocomplete_dirty: bool,
+    last_autocomplete_refresh: Instant,
 
     // Query machinery
     pending_queries: Vec<(u64, u64, Receiver<(u64, Vec<Arc<MediaItem>>)>)>,
@@ -144,12 +149,17 @@ impl MediaApp {
         let character_separator = config.character_separator.clone();
         let video_subfolder = config.video_subfolder.clone();
 
+        let autocomplete_past = Instant::now()
+            .checked_sub(AUTOCOMPLETE_DEBOUNCE + Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
+
         let mut app = Self {
             config: config.clone(),
             texture_manager: TextureManager::new(&cc.egui_ctx),
             search_input: String::new(),
             root_path: root_path.clone(),
             displayed_items: Vec::new(),
+            displayed_index: HashMap::new(),
             settings_open: None,
             view_mode: ViewMode::Library,
             scan_manager: ScanManager::new(),
@@ -162,6 +172,8 @@ impl MediaApp {
             stats_rx: None,
             autocomplete: AutocompleteData::default(),
             autocomplete_rx: None,
+            autocomplete_dirty: false,
+            last_autocomplete_refresh: autocomplete_past,
             pending_queries: Vec::new(),
             current_query_id: 0,
             last_input_time: Instant::now(),
@@ -185,6 +197,7 @@ impl MediaApp {
         app.refresh_items();
         app.request_autocomplete();
         app.refresh_staging_items();
+        app.request_stats_from_items();
 
         if !root_path.is_empty() {
             let mapping = config.folder_mapping.clone();
@@ -251,15 +264,15 @@ impl MediaApp {
         chars: Vec<String>,
         tags: Vec<String>,
     ) {
-        for arc in &mut self.displayed_items {
-            if arc.path == path {
-                let mut updated = (**arc).clone();
+        if let Some(&idx) = self.displayed_index.get(path) {
+            // Bounds-check in case the index is stale (e.g. after a clear race).
+            if idx < self.displayed_items.len() && self.displayed_items[idx].path == path {
+                let mut updated = (*self.displayed_items[idx]).clone();
                 updated.copyright = copyright;
                 updated.artist = artist;
                 updated.characters = chars;
                 updated.tags = tags;
-                *arc = Arc::new(updated);
-                return;
+                self.displayed_items[idx] = Arc::new(updated);
             }
         }
     }
@@ -323,8 +336,20 @@ impl MediaApp {
         self.stats_rx = Some(DbService::query_stats_for_values(copyrights, artists, tags));
     }
 
-    fn request_autocomplete(&mut self) {
+    pub fn request_autocomplete(&mut self) {
+        self.autocomplete_dirty = true;
+    }
+
+    fn maybe_flush_autocomplete(&mut self) {
+        if !self.autocomplete_dirty || self.autocomplete_rx.is_some() {
+            return;
+        }
+        if self.last_autocomplete_refresh.elapsed() < AUTOCOMPLETE_DEBOUNCE {
+            return;
+        }
         self.autocomplete_rx = Some(DbService::query_autocomplete());
+        self.last_autocomplete_refresh = Instant::now();
+        self.autocomplete_dirty = false;
     }
 
     fn poll_stats(&mut self, ctx: &Context) {
@@ -364,6 +389,11 @@ impl MediaApp {
         if scan_finished || watch_changed {
             self.texture_manager.invalidate_prefetch();
             self.refresh_items();
+            if scan_finished {
+                self.last_autocomplete_refresh = Instant::now()
+                    .checked_sub(AUTOCOMPLETE_DEBOUNCE + Duration::from_secs(1))
+                    .unwrap_or_else(Instant::now);
+            }
             self.request_autocomplete();
             ctx.request_repaint();
         }
@@ -396,6 +426,7 @@ impl MediaApp {
         self.has_more = true;
         self.current_query_id = id;
         self.displayed_items.clear();
+        self.displayed_index.clear();
         self.pending_queries.clear();
         self.pending_queries.push((id, id, rx));
         self.is_loading_more = true;
@@ -482,7 +513,13 @@ impl MediaApp {
                         } else {
                             self.page += 1;
                         }
+
+                        let base = self.displayed_items.len();
                         self.displayed_items.extend(items);
+                        for idx in base..self.displayed_items.len() {
+                            let path = self.displayed_items[idx].path.clone();
+                            self.displayed_index.insert(path, idx);
+                        }
 
                         if is_first_page {
                             self.request_stats_from_items();
@@ -549,6 +586,7 @@ impl MediaApp {
 
         DbService::delete_by_path(item.path.clone());
         self.displayed_items.retain(|i| i.path != item.path);
+        self.rebuild_display_index();
         self.request_stats_from_items();
     }
 
@@ -560,6 +598,13 @@ impl MediaApp {
 
         DbService::staging_delete_by_path(item.path.clone());
         self.staging_items.retain(|i| i.path != item.path);
+    }
+
+    fn rebuild_display_index(&mut self) {
+        self.displayed_index.clear();
+        for (idx, item) in self.displayed_items.iter().enumerate() {
+            self.displayed_index.insert(item.path.clone(), idx);
+        }
     }
 
     pub fn open_distribute_modal(&mut self, item: Arc<StagingItem>) {
@@ -681,6 +726,7 @@ impl eframe::App for MediaApp {
         self.poll_autocomplete(&ctx);
         self.poll_staging(&ctx);
         self.handle_search_input(&ctx);
+        self.maybe_flush_autocomplete();
         self.texture_manager.update(&ctx);
         self.handle_scan_and_watch_events(&ctx);
 

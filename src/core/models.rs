@@ -164,7 +164,7 @@ impl MediaType {
 
 // DB commands
 pub enum DbCommand {
-    // Main library
+    // Main library — writes
     UpsertBatch(Vec<Arc<MediaItem>>, i64),
     DeleteNotSeen(i64),
     DeleteByPath(String),
@@ -181,13 +181,16 @@ pub enum DbCommand {
         new_path: String,
         new_name: String,
     },
-
-    QueryStatsForValues {
-        copyrights: Vec<String>,
-        artists: Vec<String>,
-        tags: Vec<String>,
-        resp: Sender<LibraryStats>,
+    InsertDistributed {
+        item: Arc<MediaItem>,
     },
+
+    // Staging — writes
+    StagingUpsertBatch(Vec<Arc<StagingItem>>, i64),
+    StagingDeleteNotSeen(i64),
+    StagingDeleteByPath(String),
+
+    // Main library — reads
     Query {
         id: u64,
         limit: usize,
@@ -207,22 +210,19 @@ pub enum DbCommand {
         field_filter: Option<FieldFilter>,
         resp: Sender<(u64, Vec<Arc<MediaItem>>)>,
     },
-
-    InsertDistributed {
-        item: Arc<MediaItem>,
+    QueryStatsForValues {
+        copyrights: Vec<String>,
+        artists: Vec<String>,
+        tags: Vec<String>,
+        resp: Sender<LibraryStats>,
     },
-
-    // Staging
-    StagingUpsertBatch(Vec<Arc<StagingItem>>, i64),
-    StagingDeleteNotSeen(i64),
-    StagingDeleteByPath(String),
-    StagingQuery {
-        resp: Sender<Vec<Arc<StagingItem>>>,
-    },
-
-    // Cross-cutting
     QueryAutocomplete {
         resp: Sender<AutocompleteData>,
+    },
+
+    // Staging — reads
+    StagingQuery {
+        resp: Sender<Vec<Arc<StagingItem>>>,
     },
 }
 

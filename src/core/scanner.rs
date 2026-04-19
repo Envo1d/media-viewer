@@ -3,6 +3,7 @@ use crate::infra::config::FolderMapping;
 use crate::utils::{build_media_item, current_timestamp};
 use crossbeam_channel::{bounded, Sender};
 use ignore::WalkBuilder;
+use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 
@@ -70,8 +71,10 @@ impl MediaScanner {
             .git_ignore(false)
             .threads(walker_threads)
             .filter_entry(move |entry| {
-                let path = entry.path().to_string_lossy();
-                !excluded_dirs.iter().any(|ex| path.starts_with(ex.as_str()))
+                let path = entry.path();
+                !excluded_dirs
+                    .iter()
+                    .any(|ex| path.starts_with(Path::new(ex)))
             })
             .build_parallel()
             .run(|| {

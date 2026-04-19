@@ -2,7 +2,7 @@ use crate::core::models::{
     AutocompleteData, DbCommand, FieldFilter, LibraryStats, MediaFilter, MediaItem, SortOrder,
     StagingItem,
 };
-use crate::data::db_worker::get_db;
+use crate::data::db_worker::{get_db, get_read_db};
 use crossbeam_channel::Receiver;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -26,7 +26,7 @@ impl DbService {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let id = next_id();
 
-        get_db()
+        get_read_db()
             .send(DbCommand::Query {
                 id,
                 limit,
@@ -52,7 +52,7 @@ impl DbService {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let id = next_id();
 
-        get_db()
+        get_read_db()
             .send(DbCommand::Search {
                 id,
                 query,
@@ -66,6 +66,39 @@ impl DbService {
             .ok();
 
         (id, rx)
+    }
+
+    pub fn query_stats_for_values(
+        copyrights: Vec<String>,
+        artists: Vec<String>,
+        tags: Vec<String>,
+    ) -> Receiver<LibraryStats> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        get_read_db()
+            .send(DbCommand::QueryStatsForValues {
+                copyrights,
+                artists,
+                tags,
+                resp: tx,
+            })
+            .ok();
+        rx
+    }
+
+    pub fn query_autocomplete() -> Receiver<AutocompleteData> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        get_read_db()
+            .send(DbCommand::QueryAutocomplete { resp: tx })
+            .ok();
+        rx
+    }
+
+    pub fn staging_query() -> Receiver<Vec<Arc<StagingItem>>> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        get_read_db()
+            .send(DbCommand::StagingQuery { resp: tx })
+            .ok();
+        rx
     }
 
     pub fn update_metadata(
@@ -98,37 +131,6 @@ impl DbService {
                 new_name,
             })
             .ok();
-    }
-
-    pub fn query_stats_for_values(
-        copyrights: Vec<String>,
-        artists: Vec<String>,
-        tags: Vec<String>,
-    ) -> Receiver<LibraryStats> {
-        let (tx, rx) = crossbeam_channel::bounded(1);
-        get_db()
-            .send(DbCommand::QueryStatsForValues {
-                copyrights,
-                artists,
-                tags,
-                resp: tx,
-            })
-            .ok();
-        rx
-    }
-
-    pub fn query_autocomplete() -> Receiver<AutocompleteData> {
-        let (tx, rx) = crossbeam_channel::bounded(1);
-        get_db()
-            .send(DbCommand::QueryAutocomplete { resp: tx })
-            .ok();
-        rx
-    }
-
-    pub fn staging_query() -> Receiver<Vec<Arc<StagingItem>>> {
-        let (tx, rx) = crossbeam_channel::bounded(1);
-        get_db().send(DbCommand::StagingQuery { resp: tx }).ok();
-        rx
     }
 
     pub fn delete_by_path(path: String) {

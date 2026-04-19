@@ -19,15 +19,16 @@ const MAX_READY: usize = 600;
 const VISIBLE_QUEUE: usize = 64;
 const PREFETCH_QUEUE: usize = 128;
 const RESULT_QUEUE: usize = 512;
-const MAX_UPLOADS_PER_FRAME: usize = 16;
+const UPLOAD_BUDGET_US: u128 = 3_500;
 
 pub struct TextureManager {
     ready: HashMap<String, TextureHandle>,
     loading: HashSet<String>,
     failed: HashSet<String>,
 
-    // FIFO eviction
-    eviction_order: VecDeque<String>,
+    eviction_order: VecDeque<(String, u64)>,
+    insert_seq: HashMap<String, u64>,
+    seq_counter: u64,
 
     // Worker pipeline
     visible_tx: Option<Sender<TextureTask>>,
@@ -126,6 +127,8 @@ impl TextureManager {
             loading: HashSet::new(),
             failed: HashSet::new(),
             eviction_order: VecDeque::with_capacity(MAX_READY + 64),
+            insert_seq: HashMap::with_capacity(MAX_READY + 64),
+            seq_counter: 0,
             visible_tx: Some(visible_tx),
             prefetch_tx: Some(prefetch_tx),
             result_rx,
@@ -193,14 +196,19 @@ impl TextureManager {
 
     pub fn invalidate_prefetch(&mut self) {
         self.generation.fetch_add(1, Ordering::Relaxed);
-
         self.loading.clear();
+        self.failed.clear();
     }
 
     fn process_results(&mut self, ctx: &Context) {
-        let mut uploaded = 0;
+        let deadline = Instant::now() + std::time::Duration::from_micros(UPLOAD_BUDGET_US as u64);
+        let mut uploaded = 0usize;
 
-        while uploaded < MAX_UPLOADS_PER_FRAME {
+        loop {
+            if Instant::now() >= deadline {
+                break;
+            }
+
             match self.result_rx.try_recv() {
                 Ok((path, Some(img))) => {
                     self.loading.remove(&path);
@@ -209,6 +217,9 @@ impl TextureManager {
                         self.evict_one();
                     }
 
+                    self.seq_counter += 1;
+                    let seq = self.seq_counter;
+
                     let size = [img.width() as usize, img.height() as usize];
                     let tex = ctx.load_texture(
                         &path,
@@ -216,7 +227,8 @@ impl TextureManager {
                         Default::default(),
                     );
                     self.ready.insert(path.clone(), tex);
-                    self.eviction_order.push_back(path);
+                    self.insert_seq.insert(path.clone(), seq);
+                    self.eviction_order.push_back((path, seq));
 
                     uploaded += 1;
                 }
@@ -237,8 +249,10 @@ impl TextureManager {
     }
 
     fn evict_one(&mut self) {
-        while let Some(oldest) = self.eviction_order.pop_front() {
-            if self.ready.remove(&oldest).is_some() {
+        while let Some((path, seq)) = self.eviction_order.pop_front() {
+            if self.insert_seq.get(&path) == Some(&seq) {
+                self.ready.remove(&path);
+                self.insert_seq.remove(&path);
                 return;
             }
         }

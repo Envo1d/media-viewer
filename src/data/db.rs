@@ -12,6 +12,31 @@ const SELECT_COLS_FTS: &str =
     "m.path, m.name, m.copyright, m.artist, m.media_type, m.modified, m.characters, m.tags";
 const FTS_COLUMN_FILTER: &str = "{copyright artist characters tags}";
 
+fn split_cte(col: &str) -> String {
+    format!(
+        "WITH RECURSIVE split(word, rest) AS (
+            SELECT
+                CASE WHEN instr({col},'|') > 0
+                     THEN substr({col}, 1, instr({col},'|') - 1)
+                     ELSE {col} END,
+                CASE WHEN instr({col},'|') > 0
+                     THEN substr({col}, instr({col},'|') + 1)
+                     ELSE '' END
+            FROM media WHERE {col} != ''
+            UNION ALL
+            SELECT
+                CASE WHEN instr(rest,'|') > 0
+                     THEN substr(rest, 1, instr(rest,'|') - 1)
+                     ELSE rest END,
+                CASE WHEN instr(rest,'|') > 0
+                     THEN substr(rest, instr(rest,'|') + 1)
+                     ELSE '' END
+            FROM split WHERE rest != ''
+        )",
+        col = col
+    )
+}
+
 pub struct Database {
     conn: Connection,
 }
@@ -67,8 +92,7 @@ impl Database {
                     artist         = excluded.artist,
                     media_type     = excluded.media_type,
                     modified       = excluded.modified,
-                    last_seen_scan = excluded.last_seen_scan,
-                    characters     = excluded.characters",
+                    last_seen_scan = excluded.last_seen_scan",
             ) {
                 Ok(s) => s,
                 Err(e) => {
@@ -161,35 +185,47 @@ impl Database {
         artists: &[String],
         tags: &[String],
     ) -> LibraryStats {
-        let top_copyrights: Vec<(String, u32)> = copyrights
-            .iter()
-            .filter(|v| !v.is_empty())
-            .filter_map(|cr| {
-                self.conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM media WHERE copyright = ?1",
-                        rusqlite::params![cr],
-                        |r| r.get::<_, u32>(0),
-                    )
-                    .ok()
-                    .map(|cnt| (cr.clone(), cnt))
-            })
-            .collect();
+        fn placeholders(n: usize) -> String {
+            (0..n).map(|_| "?").collect::<Vec<_>>().join(",")
+        }
 
-        let top_artists: Vec<(String, u32)> = artists
-            .iter()
-            .filter(|v| !v.is_empty())
-            .filter_map(|artist| {
-                self.conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM media WHERE artist = ?1",
-                        rusqlite::params![artist],
-                        |r| r.get::<_, u32>(0),
-                    )
-                    .ok()
-                    .map(|cnt| (artist.clone(), cnt))
-            })
-            .collect();
+        let top_copyrights: Vec<(String, u32)> = if copyrights.is_empty() {
+            Vec::new()
+        } else {
+            let sql = format!(
+                "SELECT copyright, COUNT(*) FROM media \
+                 WHERE copyright IN ({}) GROUP BY copyright",
+                placeholders(copyrights.len())
+            );
+            self.conn
+                .prepare(&sql)
+                .and_then(|mut s| {
+                    s.query_map(rusqlite::params_from_iter(copyrights.iter()), |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?))
+                    })
+                    .map(|it| it.filter_map(Result::ok).collect())
+                })
+                .unwrap_or_default()
+        };
+
+        let top_artists: Vec<(String, u32)> = if artists.is_empty() {
+            Vec::new()
+        } else {
+            let sql = format!(
+                "SELECT artist, COUNT(*) FROM media \
+                 WHERE artist IN ({}) GROUP BY artist",
+                placeholders(artists.len())
+            );
+            self.conn
+                .prepare(&sql)
+                .and_then(|mut s| {
+                    s.query_map(rusqlite::params_from_iter(artists.iter()), |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?))
+                    })
+                    .map(|it| it.filter_map(Result::ok).collect())
+                })
+                .unwrap_or_default()
+        };
 
         let top_tags: Vec<(String, u32)> = tags
             .iter()
@@ -234,41 +270,39 @@ impl Database {
             })
             .unwrap_or_default();
 
-        let raw_chars: Vec<String> = self
+        let chars_sql = format!(
+            "{cte}
+             SELECT DISTINCT trim(word) FROM split WHERE trim(word) != '' ORDER BY 1",
+            cte = split_cte("characters")
+        );
+        let characters: Vec<String> = self
             .conn
-            .prepare("SELECT characters FROM media WHERE characters != ''")
+            .prepare(&chars_sql)
             .and_then(|mut s| {
                 s.query_map([], |r| r.get::<_, String>(0))
                     .map(|it| it.filter_map(Result::ok).collect())
             })
             .unwrap_or_default();
-        let mut char_set: std::collections::BTreeSet<String> = Default::default();
-        for cs in raw_chars {
-            for c in cs.split('|').map(str::trim).filter(|v| !v.is_empty()) {
-                char_set.insert(c.to_owned());
-            }
-        }
 
-        let raw_tags: Vec<String> = self
+        let tags_sql = format!(
+            "{cte}
+             SELECT DISTINCT trim(word) FROM split WHERE trim(word) != '' ORDER BY 1",
+            cte = split_cte("tags")
+        );
+        let tags: Vec<String> = self
             .conn
-            .prepare("SELECT tags FROM media WHERE tags != ''")
+            .prepare(&tags_sql)
             .and_then(|mut s| {
                 s.query_map([], |r| r.get::<_, String>(0))
                     .map(|it| it.filter_map(Result::ok).collect())
             })
             .unwrap_or_default();
-        let mut tag_set: std::collections::BTreeSet<String> = Default::default();
-        for ts in raw_tags {
-            for t in ts.split('|').map(str::trim).filter(|v| !v.is_empty()) {
-                tag_set.insert(t.to_owned());
-            }
-        }
 
         AutocompleteData {
             artists,
             copyrights,
-            characters: char_set.into_iter().collect(),
-            tags: tag_set.into_iter().collect(),
+            characters,
+            tags,
         }
     }
 

@@ -3,14 +3,15 @@ use image::RgbaImage;
 use std::fs;
 use std::hash::Hasher;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 use twox_hash::XxHash64;
 use webp::Encoder;
 
-fn preview_cache_path(cache_dir: &Path, file_path: &str) -> PathBuf {
+fn preview_cache_path(cache_dir: &Path, file_path: &str, modified: i64) -> PathBuf {
     let mut hasher = XxHash64::with_seed(0);
 
     hasher.write(file_path.as_bytes());
+    hasher.write(&modified.to_le_bytes());
 
     let hash = format!("{:016x}.webp", hasher.finish());
 
@@ -28,7 +29,12 @@ fn save_as_webp_lossy(path: &Path, img: &RgbaImage, quality: f32) {
 }
 
 pub fn load_or_generate(cache_dir: &Path, path: &str, thumb_size: u32) -> Option<RgbaImage> {
-    let cache_path = preview_cache_path(cache_dir, path);
+    let modified = fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(|t| t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64)
+        .unwrap_or(0);
+
+    let cache_path = preview_cache_path(cache_dir, path, modified);
 
     if let Ok(data) = fs::read(&cache_path) {
         if let Ok(img) = image::load_from_memory_with_format(&data, image::ImageFormat::WebP) {

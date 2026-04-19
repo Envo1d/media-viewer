@@ -279,4 +279,26 @@ pub fn run_migrations(tx: &Transaction) {
         version = 8;
         set_version(tx, version);
     }
+
+    // === MIGRATION 9 ===
+    // • Add case-insensitive name index to accelerate the default "Name A→Z"
+    //   sort order query on the media table. Without this index, ORDER BY name
+    //   on 50 k+ rows requires a full table scan on every page load.
+    // • Add case-insensitive name index on staging for consistent behaviour.
+    if version < 9 {
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_media_name ON media(name COLLATE NOCASE)",
+            [],
+        )
+        .unwrap();
+
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_staging_name ON staging(name COLLATE NOCASE)",
+            [],
+        )
+        .unwrap();
+
+        version = 9;
+        set_version(tx, version);
+    }
 }

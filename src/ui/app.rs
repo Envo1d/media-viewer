@@ -95,6 +95,7 @@ pub struct MediaApp {
     // Staging
     pub staging_items: Vec<Arc<StagingItem>>,
     staging_rx: Option<Receiver<Vec<Arc<StagingItem>>>>,
+    pub staging_search: String,
 
     // Windows rounded-window helpers
     pub window_fx: WindowEffects,
@@ -190,8 +191,8 @@ impl MediaApp {
             pending_delete: None,
             character_separator_input: character_separator,
             video_subfolder_input: video_subfolder,
-
             window_fx: WindowEffects::new(),
+            staging_search: String::new(),
         };
 
         app.refresh_items();

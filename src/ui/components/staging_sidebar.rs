@@ -1,5 +1,6 @@
 use crate::ui::app::MediaApp;
 use crate::ui::colors::{C_TEXT, C_TEXT_MUTED};
+use crate::ui::components::search_input::search_input;
 use crate::ui::components::widgets::pill_button::pill_button;
 use crate::ui::components::widgets::section_heading::section_heading;
 use crate::ui::components::widgets::toggle::toggle;
@@ -8,8 +9,8 @@ use egui::RichText;
 
 pub fn staging_sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     let icons = app.icons.as_ref().unwrap();
+    let close_icon = icons.get("close").clone();
 
-    // Title
     ui.add_space(6.0);
     ui.style_mut().interaction.selectable_labels = false;
     ui.horizontal(|ui| {
@@ -23,19 +24,38 @@ pub fn staging_sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     });
     ui.add_space(8.0);
 
-    // Item count
-    let count = app.staging_items.len();
-    ui.label(
-        RichText::new(format!(
-            "{} file{}",
-            count,
-            if count == 1 { "" } else { "s" }
-        ))
-        .size(12.5)
-        .color(C_TEXT),
+    search_input(
+        ui,
+        &mut app.staging_search,
+        "Search by name or path…",
+        &close_icon,
+        "staging",
     );
 
-    // Scan progress / Refresh button
+    let total = app.staging_items.len();
+    let visible = if app.staging_search.is_empty() {
+        total
+    } else {
+        let q = app.staging_search.trim().to_lowercase();
+        app.staging_items
+            .iter()
+            .filter(|i| i.name.to_lowercase().contains(&q) || i.path.to_lowercase().contains(&q))
+            .count()
+    };
+
+    let count_text = if app.staging_search.is_empty() {
+        format!("{} file{}", total, if total == 1 { "" } else { "s" })
+    } else {
+        format!(
+            "{} of {} file{}",
+            visible,
+            total,
+            if total == 1 { "" } else { "s" }
+        )
+    };
+
+    ui.label(RichText::new(count_text).size(12.5).color(C_TEXT));
+
     section_heading(ui, "SCAN");
 
     if app.scan_manager.is_staging_scanning {
@@ -64,7 +84,6 @@ pub fn staging_sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
         }
     }
 
-    // Preview toggle
     section_heading(ui, "SHOW PREVIEWS");
 
     let toggle_id = ui.make_persistent_id("toggle_staging_previews");

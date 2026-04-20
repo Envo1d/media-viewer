@@ -9,6 +9,7 @@ use crate::ui::components::widgets::section_heading::section_heading;
 use crate::ui::components::widgets::sort_row::sort_row;
 use crate::ui::components::widgets::toggle::toggle;
 use egui::{Color32, CornerRadius, FontId, Frame, Margin, Pos2, RichText, Sense, Vec2};
+use std::time::Instant;
 
 fn stat_chip(ui: &mut egui::Ui, label: &str, count: u32, active: bool) -> bool {
     let desired = Vec2::new(ui.available_width(), 28.0);
@@ -100,7 +101,22 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     let prev_filter = app.filter.clone();
     let prev_sort = app.sort.clone();
 
-    search_input(app, ui);
+    let close_icon = app.icons.as_ref().unwrap().get("close").clone();
+    let sr = search_input(
+        ui,
+        &mut app.search_input,
+        "Search...",
+        &close_icon,
+        "library",
+    );
+    if sr.changed {
+        app.last_input_time = Instant::now();
+    }
+    if sr.cleared {
+        app.last_input_time = Instant::now();
+        app.field_filter = None;
+        app.refresh_items();
+    }
 
     let count_text = if app.scan_manager.is_scanning {
         format!(

@@ -18,14 +18,14 @@ use crate::ui::icon_registry::IconRegistry;
 use crate::ui::scan_manager::ScanManager;
 use crate::ui::styles::apply_style;
 use crate::ui::texture_manager::TextureManager;
-use crate::utils::file_helpers::{build_filename_stem, move_file, resolve_conflict};
+use crate::utils::file_helpers::{move_file, resolve_conflict};
 use crossbeam_channel::Receiver;
 use eframe::Frame;
 use egui::{Context, Margin, TextureHandle, Ui};
 use egui_extras::image::load_image_bytes;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use trash::delete;
@@ -96,6 +96,8 @@ pub struct MediaApp {
     pub staging_items: Vec<Arc<StagingItem>>,
     staging_rx: Option<Receiver<Vec<Arc<StagingItem>>>>,
     pub staging_search: String,
+    pub staging_filtered: Vec<Arc<StagingItem>>,
+    staging_last_search: String,
 
     // Windows rounded-window helpers
     pub window_fx: WindowEffects,
@@ -193,6 +195,8 @@ impl MediaApp {
             video_subfolder_input: video_subfolder,
             window_fx: WindowEffects::new(),
             staging_search: String::new(),
+            staging_filtered: Vec::new(),
+            staging_last_search: String::new(),
         };
 
         app.refresh_items();
@@ -233,47 +237,184 @@ impl MediaApp {
         self.modal_state.open_edit(item, &self.autocomplete);
     }
 
+    fn canonical_dir(
+        &self,
+        library_path: &Path,
+        copyright: &str,
+        artist: &str,
+        media_type: &MediaType,
+    ) -> PathBuf {
+        let mut dir = library_path.join(copyright).join(artist);
+        if matches!(media_type, MediaType::Video) && !self.config.video_subfolder.is_empty() {
+            dir = dir.join(&self.config.video_subfolder);
+        }
+        dir
+    }
+
+    fn try_move_library_file(
+        &mut self,
+        old_path: &str,
+        new_copyright: &str,
+        new_artist: &str,
+        media_type: &MediaType,
+    ) -> Result<(String, String), String> {
+        let library_path = self
+            .config
+            .library_path
+            .clone()
+            .ok_or_else(|| "Library path is not configured.".to_string())?;
+
+        let dest_dir = self.canonical_dir(&library_path, new_copyright, new_artist, media_type);
+
+        let src = Path::new(old_path);
+
+        if src.parent() == Some(dest_dir.as_path()) {
+            let name = src
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            return Ok((old_path.to_string(), name));
+        }
+
+        fs::create_dir_all(&dest_dir)
+            .map_err(|e| format!("Could not create destination folder: {e}"))?;
+
+        let stem = src
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_owned();
+        let ext = src
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let dest_filename = match resolve_conflict(&dest_dir, &stem, &ext) {
+            ResolvedName::Free(name) => name,
+            ResolvedName::RenameExisting {
+                existing_old,
+                existing_new,
+                new_file,
+            } => {
+                let old_p = dest_dir.join(&existing_old);
+                let new_p = dest_dir.join(&existing_new);
+                fs::rename(&old_p, &new_p)
+                    .map_err(|e| format!("Could not rename existing file: {e}"))?;
+                DbService::rename_media_path(
+                    old_p.to_string_lossy().to_string(),
+                    new_p.to_string_lossy().to_string(),
+                    existing_new,
+                );
+                new_file
+            }
+            ResolvedName::NextSuffix(name) => name,
+        };
+
+        let dest_path = dest_dir.join(&dest_filename);
+        move_file(src, &dest_path).map_err(|e| format!("File move failed: {e}"))?;
+
+        Ok((dest_path.to_string_lossy().into_owned(), dest_filename))
+    }
+
     fn do_save_edit(&mut self) {
         let Some(MediaModalMode::Edit(item)) = &self.modal_state.mode else {
             return;
         };
-        let path = item.path.clone();
-        let copyright = self.modal_state.copyright.trim().to_owned();
-        let artist = self.modal_state.artist.trim().to_owned();
+
+        let old_path = item.path.clone();
+        let old_copyright = item.copyright.clone();
+        let old_artist = item.artist.clone();
+        let media_type = item.media_type.clone();
+
+        let new_copyright = self.modal_state.copyright.trim().to_owned();
+        let new_artist = self.modal_state.artist.trim().to_owned();
         let characters = self.modal_state.characters.clone();
         let tags = self.modal_state.tags.clone();
 
+        let location_changed = new_copyright != old_copyright || new_artist != old_artist;
+
+        let (final_path, final_name) = if location_changed && self.config.library_path.is_some() {
+            match self.try_move_library_file(&old_path, &new_copyright, &new_artist, &media_type) {
+                Ok(result) => result,
+                Err(e) => {
+                    self.modal_state.error = Some(e);
+                    return;
+                }
+            }
+        } else {
+            let name = Path::new(&old_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            (old_path.clone(), name)
+        };
+
+        let path_changed = final_path != old_path;
+
+        if path_changed {
+            DbService::rename_media_path(old_path.clone(), final_path.clone(), final_name.clone());
+        }
+
         DbService::update_metadata(
-            path.clone(),
-            copyright.clone(),
-            artist.clone(),
+            final_path.clone(),
+            new_copyright.clone(),
+            new_artist.clone(),
             characters.clone(),
             tags.clone(),
         );
 
-        self.apply_metadata_update(&path, copyright, artist, characters, tags);
+        self.apply_full_item_update(
+            &old_path,
+            final_path,
+            final_name,
+            new_copyright,
+            new_artist,
+            characters,
+            tags,
+            media_type,
+        );
+
         self.modal_state.close();
         self.request_stats_from_items();
         self.request_autocomplete();
     }
 
-    fn apply_metadata_update(
+    fn apply_full_item_update(
         &mut self,
-        path: &str,
+        old_path: &str,
+        new_path: String,
+        new_name: String,
         copyright: String,
         artist: String,
-        chars: Vec<String>,
+        characters: Vec<String>,
         tags: Vec<String>,
+        media_type: MediaType,
     ) {
-        if let Some(&idx) = self.displayed_index.get(path) {
-            // Bounds-check in case the index is stale (e.g. after a clear race).
-            if idx < self.displayed_items.len() && self.displayed_items[idx].path == path {
-                let mut updated = (*self.displayed_items[idx]).clone();
-                updated.copyright = copyright;
-                updated.artist = artist;
-                updated.characters = chars;
-                updated.tags = tags;
-                self.displayed_items[idx] = Arc::new(updated);
+        for arc in &mut self.displayed_items {
+            if arc.path == old_path {
+                let modified = if new_path != old_path {
+                    fs::metadata(&new_path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(arc.modified)
+                } else {
+                    arc.modified
+                };
+
+                *arc = Arc::new(MediaItem {
+                    path: new_path,
+                    name: new_name,
+                    media_type,
+                    copyright,
+                    artist,
+                    characters,
+                    tags,
+                    modified,
+                });
+                return;
             }
         }
     }
@@ -550,6 +691,29 @@ impl MediaApp {
         }
     }
 
+    pub fn rebuild_staging_filtered(&mut self) {
+        let q = self.staging_search.trim().to_lowercase();
+        self.staging_filtered = if q.is_empty() {
+            self.staging_items.clone()
+        } else {
+            self.staging_items
+                .iter()
+                .filter(|i| {
+                    i.name.to_lowercase().contains(&q) || i.path.to_lowercase().contains(&q)
+                })
+                .cloned()
+                .collect()
+        };
+        self.staging_last_search = self.staging_search.clone();
+        self.texture_manager.invalidate_prefetch();
+    }
+
+    pub fn sync_staging_filter(&mut self) {
+        if self.staging_search != self.staging_last_search {
+            self.rebuild_staging_filtered();
+        }
+    }
+
     pub fn refresh_staging_items(&mut self) {
         self.staging_rx = Some(DbService::staging_query());
     }
@@ -561,6 +725,7 @@ impl MediaApp {
         match rx.try_recv() {
             Ok(items) => {
                 self.staging_items = items;
+                self.rebuild_staging_filtered();
                 self.staging_rx = None;
                 ctx.request_repaint();
             }
@@ -599,6 +764,7 @@ impl MediaApp {
 
         DbService::staging_delete_by_path(item.path.clone());
         self.staging_items.retain(|i| i.path != item.path);
+        self.rebuild_staging_filtered();
     }
 
     fn rebuild_display_index(&mut self) {
@@ -629,12 +795,8 @@ impl MediaApp {
             return;
         };
 
-        let mut dest_dir = library_path.join(&copyright).join(&artist);
-        if matches!(staging_item.media_type, MediaType::Video)
-            && !self.config.video_subfolder.is_empty()
-        {
-            dest_dir = dest_dir.join(&self.config.video_subfolder);
-        }
+        let dest_dir =
+            self.canonical_dir(&library_path, &copyright, &artist, &staging_item.media_type);
 
         if let Err(e) = fs::create_dir_all(&dest_dir) {
             self.modal_state.error = Some(format!("Could not create destination folder: {e}"));
@@ -648,14 +810,17 @@ impl MediaApp {
             .unwrap_or("")
             .to_lowercase();
 
-        let stem = build_filename_stem(
-            &staging_item.media_type,
-            &characters,
-            &artist,
-            &video_title,
-            src_path,
-            &self.config.character_separator,
-        );
+        let stem = {
+            use crate::utils::file_helpers::build_filename_stem;
+            build_filename_stem(
+                &staging_item.media_type,
+                &characters,
+                &artist,
+                &video_title,
+                src_path,
+                &self.config.character_separator,
+            )
+        };
 
         let dest_filename = match resolve_conflict(&dest_dir, &stem, &ext) {
             ResolvedName::Free(name) => name,
@@ -709,6 +874,7 @@ impl MediaApp {
         DbService::staging_delete_by_path(staging_item.path.clone());
 
         self.staging_items.retain(|i| i.path != staging_item.path);
+        self.rebuild_staging_filtered();
         self.modal_state.close();
 
         self.request_autocomplete();
@@ -730,6 +896,7 @@ impl eframe::App for MediaApp {
         self.maybe_flush_autocomplete();
         self.texture_manager.update(&ctx);
         self.handle_scan_and_watch_events(&ctx);
+        self.sync_staging_filter();
 
         let window_frame = egui::Frame::NONE
             .fill(C_PRIMARY_BG)

@@ -33,15 +33,7 @@ pub fn staging_sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     );
 
     let total = app.staging_items.len();
-    let visible = if app.staging_search.is_empty() {
-        total
-    } else {
-        let q = app.staging_search.trim().to_lowercase();
-        app.staging_items
-            .iter()
-            .filter(|i| i.name.to_lowercase().contains(&q) || i.path.to_lowercase().contains(&q))
-            .count()
-    };
+    let visible = app.staging_filtered.len();
 
     let count_text = if app.staging_search.is_empty() {
         format!("{} file{}", total, if total == 1 { "" } else { "s" })

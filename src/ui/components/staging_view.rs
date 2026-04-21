@@ -8,24 +8,9 @@ use crate::ui::components::staging_card::staging_card;
 use egui::{RichText, Ui, Vec2};
 use std::sync::Arc;
 
-#[inline]
-fn matches_query(item: &StagingItem, query: &str) -> bool {
-    let name = item.name.to_lowercase();
-    let path = item.path.to_lowercase();
-    name.contains(query) || path.contains(query)
-}
+const PREFETCH_MARGIN: usize = 2;
 
 pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
-    let query = app.staging_search.trim().to_lowercase();
-    let filtered: Vec<&Arc<StagingItem>> = if query.is_empty() {
-        app.staging_items.iter().collect()
-    } else {
-        app.staging_items
-            .iter()
-            .filter(|item| matches_query(item, &query))
-            .collect()
-    };
-
     if app.staging_items.is_empty() {
         ui.vertical_centered(|ui| {
             ui.add_space(120.0);
@@ -46,14 +31,14 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
         return;
     }
 
-    if filtered.is_empty() {
+    if app.staging_filtered.is_empty() {
         ui.vertical_centered(|ui| {
             ui.add_space(120.0);
             ui.label(RichText::new("No results").size(16.0).color(C_TEXT_MUTED));
             ui.add_space(8.0);
             ui.label(
                 RichText::new(format!(
-                    "No files match \"{}\"\nin name or path.",
+                    "No files match \"{}\" in name or path.",
                     app.staging_search.trim()
                 ))
                 .size(12.5)
@@ -64,7 +49,7 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
     }
 
     let card_sz = app.card_size;
-    let total_items = filtered.len();
+    let total_items = app.staging_filtered.len();
     let m = compute_grid_metrics(ui.available_width(), total_items, card_sz);
 
     let mut distribute_request: Option<Arc<StagingItem>> = None;
@@ -78,13 +63,16 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
                 ui.add_space(TOP_PAD);
             }
 
-            for row in row_range {
+            let vis_start = row_range.start * m.columns;
+            let vis_end = (row_range.end * m.columns).min(total_items);
+
+            for row in row_range.clone() {
                 ui.horizontal(|ui| {
                     ui.add_space(m.h_pad);
 
                     for col in 0..m.columns {
                         let idx = row * m.columns + col;
-                        let Some(item) = filtered.get(idx) else {
+                        let Some(item) = app.staging_filtered.get(idx) else {
                             break;
                         };
 
@@ -110,6 +98,20 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
             }
 
             ui.add_space(BOTTOM_PAD);
+
+            let pre_start = row_range.start.saturating_sub(PREFETCH_MARGIN) * m.columns;
+            let pre_end = (row_range.end + PREFETCH_MARGIN).min(m.total_rows) * m.columns;
+
+            for idx in pre_start..vis_start {
+                if let Some(item) = app.staging_filtered.get(idx) {
+                    app.texture_manager.prefetch(&item.path);
+                }
+            }
+            for idx in vis_end..pre_end.min(total_items) {
+                if let Some(item) = app.staging_filtered.get(idx) {
+                    app.texture_manager.prefetch(&item.path);
+                }
+            }
         });
 
     if let Some(item) = distribute_request {

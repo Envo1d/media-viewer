@@ -48,6 +48,7 @@ pub fn modal_frame_window(
         .collapsible(false)
         .fixed_size(size)
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+        .order(egui::Order::Tooltip)
         .frame(frame)
 }
 

@@ -181,6 +181,9 @@ pub enum DbCommand {
         new_path: String,
         new_name: String,
     },
+
+    RenameGroupBatch(Vec<(String, String, String, String)>),
+
     InsertDistributed {
         item: Arc<MediaItem>,
     },
@@ -223,6 +226,14 @@ pub enum DbCommand {
     // Staging — reads
     StagingQuery {
         resp: Sender<Vec<Arc<StagingItem>>>,
+    },
+
+    // Reorder group query
+    QueryGroup {
+        base_stem: String,
+        ext: String,
+        dir: String,
+        resp: Sender<Vec<Arc<MediaItem>>>,
     },
 }
 
@@ -309,4 +320,11 @@ pub enum MediaModalMode {
 pub enum PendingDelete {
     Library(Arc<MediaItem>),
     Staging(Arc<StagingItem>),
+}
+
+// Reorder Media
+pub enum ReorderAction {
+    None,
+    Apply,
+    Close,
 }

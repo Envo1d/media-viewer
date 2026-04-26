@@ -1,6 +1,6 @@
 use crate::core::models::{
     AutocompleteData, FieldFilter, LibraryStats, MediaFilter, MediaItem, MediaModalMode, MediaType,
-    ModalAction, PendingDelete, ResolvedName, SortOrder, StagingItem, ViewMode,
+    ModalAction, PendingDelete, ReorderAction, ResolvedName, SortOrder, StagingItem, ViewMode,
 };
 use crate::data::db_service::DbService;
 use crate::data::db_worker::init_db;
@@ -10,6 +10,7 @@ use crate::infra::window_effects::WindowEffects;
 use crate::ui::colors::C_PRIMARY_BG;
 use crate::ui::components;
 use crate::ui::components::media_modal::{media_modal, MediaModalState};
+use crate::ui::components::reorder_modal::{do_apply_reorder, reorder_modal, ReorderState};
 use crate::ui::components::sidebar::sidebar;
 use crate::ui::components::staging_sidebar::staging_sidebar;
 use crate::ui::components::staging_view::staging_view;
@@ -18,7 +19,7 @@ use crate::ui::icon_registry::IconRegistry;
 use crate::ui::scan_manager::ScanManager;
 use crate::ui::styles::apply_style;
 use crate::ui::texture_manager::TextureManager;
-use crate::utils::file_helpers::{move_file, resolve_conflict};
+use crate::utils::file_helpers::{move_file, natural_cmp, parse_suffix_number, resolve_conflict};
 use crossbeam_channel::Receiver;
 use eframe::Frame;
 use egui::{Context, Margin, TextureHandle, Ui};
@@ -101,6 +102,9 @@ pub struct MediaApp {
 
     // Windows rounded-window helpers
     pub window_fx: WindowEffects,
+
+    // Reorder modal state (None when closed)
+    pub reorder_state: Option<ReorderState>,
 }
 
 impl MediaApp {
@@ -197,6 +201,7 @@ impl MediaApp {
             staging_search: String::new(),
             staging_filtered: Vec::new(),
             staging_last_search: String::new(),
+            reorder_state: None,
         };
 
         app.refresh_items();
@@ -656,11 +661,24 @@ impl MediaApp {
                             self.page += 1;
                         }
 
-                        let base = self.displayed_items.len();
                         self.displayed_items.extend(items);
-                        for idx in base..self.displayed_items.len() {
-                            let path = self.displayed_items[idx].path.clone();
-                            self.displayed_index.insert(path, idx);
+
+                        match self.sort {
+                            SortOrder::NameAsc => {
+                                self.displayed_items
+                                    .sort_unstable_by(|a, b| natural_cmp(&a.name, &b.name));
+                            }
+                            SortOrder::NameDesc => {
+                                self.displayed_items
+                                    .sort_unstable_by(|a, b| natural_cmp(&b.name, &a.name));
+                            }
+
+                            _ => {}
+                        }
+
+                        self.displayed_index.clear();
+                        for (idx, item) in self.displayed_items.iter().enumerate() {
+                            self.displayed_index.insert(item.path.clone(), idx);
                         }
 
                         if is_first_page {
@@ -745,6 +763,8 @@ impl MediaApp {
     }
 
     pub fn do_delete_library(&mut self, item: Arc<MediaItem>) {
+        let deleted_path = PathBuf::from(&item.path);
+
         if let Err(e) = delete(&item.path) {
             eprintln!("[delete] failed to move to trash {}: {e}", item.path);
             return;
@@ -752,6 +772,29 @@ impl MediaApp {
 
         DbService::delete_by_path(item.path.clone());
         self.displayed_items.retain(|i| i.path != item.path);
+
+        let renames = crate::utils::file_helpers::reindex_after_delete(&deleted_path);
+
+        for (old_path, new_path, new_name) in renames {
+            DbService::rename_media_path(old_path.clone(), new_path.clone(), new_name.clone());
+
+            for arc in &mut self.displayed_items {
+                if arc.path == old_path {
+                    *arc = Arc::new(MediaItem {
+                        path: new_path.clone(),
+                        name: new_name.clone(),
+                        media_type: arc.media_type.clone(),
+                        copyright: arc.copyright.clone(),
+                        artist: arc.artist.clone(),
+                        characters: arc.characters.clone(),
+                        tags: arc.tags.clone(),
+                        modified: arc.modified,
+                    });
+                    break;
+                }
+            }
+        }
+
         self.rebuild_display_index();
         self.request_stats_from_items();
     }
@@ -767,11 +810,28 @@ impl MediaApp {
         self.rebuild_staging_filtered();
     }
 
-    fn rebuild_display_index(&mut self) {
+    pub fn rebuild_display_index(&mut self) {
         self.displayed_index.clear();
         for (idx, item) in self.displayed_items.iter().enumerate() {
             self.displayed_index.insert(item.path.clone(), idx);
         }
+    }
+
+    pub fn open_reorder_modal(&mut self, item: Arc<MediaItem>) {
+        let path = Path::new(&item.path);
+        let dir = path.parent().map(|d| d.to_path_buf()).unwrap_or_default();
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .unwrap_or_default();
+        let base_stem = if let Some((base, _)) = parse_suffix_number(stem) {
+            base
+        } else {
+            stem.to_owned()
+        };
+        self.reorder_state = Some(ReorderState::new(base_stem, ext, dir));
     }
 
     pub fn open_distribute_modal(&mut self, item: Arc<StagingItem>) {
@@ -938,6 +998,15 @@ impl eframe::App for MediaApp {
                 }
 
                 components::delete_confirm_modal(self, ui);
+
+                {
+                    let ro_action = reorder_modal(self, ui);
+                    match ro_action {
+                        ReorderAction::Apply => do_apply_reorder(self),
+                        ReorderAction::Close => self.reorder_state = None,
+                        ReorderAction::None => {}
+                    }
+                }
 
                 egui::CentralPanel::default().show_inside(ui, |ui| match self.view_mode {
                     ViewMode::Library => components::media_view(self, ui),

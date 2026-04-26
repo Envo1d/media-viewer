@@ -3,6 +3,7 @@ use crate::core::models::{
 };
 use crate::data::migrations::{init_schema_version, run_migrations};
 use crate::infra::config::AppConfig;
+use crate::utils::file_helpers::natural_cmp;
 use crate::utils::{build_search_query, map_media_item, map_staging_item};
 use rusqlite::Connection;
 use std::sync::Arc;
@@ -45,6 +46,10 @@ impl Database {
     pub fn new() -> Self {
         let path = AppConfig::get_db_path();
         let mut conn = Connection::open(path).expect("Cannot open SQLite database");
+
+        conn.busy_timeout(std::time::Duration::from_secs(30))
+            .expect("Failed to set SQLite busy timeout");
+
         conn.execute_batch(
             "PRAGMA journal_mode        = WAL;
              PRAGMA synchronous         = NORMAL;
@@ -54,6 +59,10 @@ impl Database {
              PRAGMA wal_autocheckpoint  = 1000;",
         )
         .expect("Failed to configure SQLite pragmas");
+
+        conn.create_collation("NATURALSORT", natural_cmp)
+            .expect("Failed to register NATURALSORT collation");
+
         let tx = conn
             .transaction()
             .expect("Cannot begin migration transaction");
@@ -176,6 +185,45 @@ impl Database {
             rusqlite::params![old_path, new_path, new_name],
         ) {
             eprintln!("rename_media_path error: {e}");
+        }
+    }
+
+    pub fn rename_group_batch(&mut self, renames: &[(String, String, String, String)]) {
+        if renames.is_empty() {
+            return;
+        }
+        let tx = match self.conn.transaction() {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("rename_group_batch begin tx: {e}");
+                return;
+            }
+        };
+
+        for (orig_path, temp_path, _final_path, _final_name) in renames {
+            let temp_name = std::path::Path::new(temp_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if let Err(e) = tx.execute(
+                "UPDATE media SET path = ?2, name = ?3 WHERE path = ?1",
+                rusqlite::params![orig_path, temp_path, temp_name],
+            ) {
+                eprintln!("rename_group_batch phase-A error ({orig_path} → {temp_path}): {e}");
+            }
+        }
+
+        for (_orig_path, temp_path, final_path, final_name) in renames {
+            if let Err(e) = tx.execute(
+                "UPDATE media SET path = ?2, name = ?3 WHERE path = ?1",
+                rusqlite::params![temp_path, final_path, final_name],
+            ) {
+                eprintln!("rename_group_batch phase-B error ({temp_path} → {final_path}): {e}");
+            }
+        }
+
+        if let Err(e) = tx.commit() {
+            eprintln!("rename_group_batch commit: {e}");
         }
     }
 
@@ -489,5 +537,45 @@ impl Database {
                 eprintln!("staging_query: {e}");
                 Vec::new()
             })
+    }
+
+    pub fn query_group(&self, base_stem: &str, ext: &str, dir: &str) -> Vec<MediaItem> {
+        let esc = |s: &str| s.replace('|', "||").replace('%', "|%").replace('_', "|_");
+
+        let plain_name = format!("{}.{}", base_stem, ext);
+        let suffixed_like = format!("{} - %.{}", esc(base_stem), esc(ext));
+
+        let sep = if dir.ends_with(['/', '\\']) {
+            ""
+        } else {
+            if dir.contains('\\') { "\\" } else { "/" }
+        };
+        let dir_prefix_like = format!("{}{}%", esc(dir), sep);
+
+        let sql = format!(
+            "SELECT {c} FROM media \
+             WHERE path LIKE ? ESCAPE '|' \
+               AND (name = ? OR name LIKE ? ESCAPE '|') \
+             ORDER BY path ASC",
+            c = SELECT_COLS,
+        );
+
+        let mut stmt = match self.conn.prepare_cached(&sql) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("query_group prepare: {e}");
+                return Vec::new();
+            }
+        };
+
+        stmt.query_map(
+            rusqlite::params![dir_prefix_like, plain_name, suffixed_like],
+            map_media_item,
+        )
+        .map(|it| it.filter_map(Result::ok).collect())
+        .unwrap_or_else(|e| {
+            eprintln!("query_group: {e}");
+            Vec::new()
+        })
     }
 }

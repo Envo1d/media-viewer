@@ -6,13 +6,17 @@ use std::sync::{Arc, OnceLock};
 static WRITE_DB: OnceLock<Sender<DbCommand>> = OnceLock::new();
 static READ_DB: OnceLock<Sender<DbCommand>> = OnceLock::new();
 
-fn start_write_worker() -> Sender<DbCommand> {
+fn start_write_worker() -> (Sender<DbCommand>, crossbeam_channel::Receiver<()>) {
     let (tx, rx) = crossbeam_channel::bounded::<DbCommand>(2000);
+    let (ready_tx, ready_rx) = crossbeam_channel::bounded::<()>(1);
 
     std::thread::Builder::new()
         .name("nexa-db-write".into())
         .spawn(move || {
             let mut db = Database::new();
+
+            let _ = ready_tx.send(());
+
             for cmd in rx {
                 if let Err(e) =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match cmd {
@@ -36,6 +40,10 @@ fn start_write_worker() -> Sender<DbCommand> {
                             new_name,
                         } => {
                             db.rename_media_path(&old_path, &new_path, &new_name);
+                        }
+
+                        DbCommand::RenameGroupBatch(renames) => {
+                            db.rename_group_batch(&renames);
                         }
 
                         DbCommand::InsertDistributed { item } => db.insert_distributed(&item),
@@ -63,15 +71,17 @@ fn start_write_worker() -> Sender<DbCommand> {
         })
         .expect("Failed to spawn DB write worker thread");
 
-    tx
+    (tx, ready_rx)
 }
 
-fn start_read_worker() -> Sender<DbCommand> {
+fn start_read_worker(write_ready_rx: crossbeam_channel::Receiver<()>) -> Sender<DbCommand> {
     let (tx, rx) = crossbeam_channel::bounded::<DbCommand>(256);
 
     std::thread::Builder::new()
         .name("nexa-db-read".into())
         .spawn(move || {
+            let _ = write_ready_rx.recv();
+
             let db = Database::new();
             for cmd in rx {
                 if let Err(e) =
@@ -126,6 +136,17 @@ fn start_read_worker() -> Sender<DbCommand> {
                             let _ = resp.send(arced);
                         }
 
+                        DbCommand::QueryGroup {
+                            base_stem,
+                            ext,
+                            dir,
+                            resp,
+                        } => {
+                            let items = db.query_group(&base_stem, &ext, &dir);
+                            let arced: Vec<Arc<_>> = items.into_iter().map(Arc::new).collect();
+                            let _ = resp.send(arced);
+                        }
+
                         other => {
                             eprintln!(
                                 "[db-read-worker] received a write command — \
@@ -145,8 +166,8 @@ fn start_read_worker() -> Sender<DbCommand> {
 }
 
 pub fn init_db() {
-    let write_tx = start_write_worker();
-    let read_tx = start_read_worker();
+    let (write_tx, ready_rx) = start_write_worker();
+    let read_tx = start_read_worker(ready_rx);
     WRITE_DB
         .set(write_tx)
         .expect("DB write worker already initialised");

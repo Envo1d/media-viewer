@@ -29,8 +29,10 @@ pub fn media_card(
     texture_manager: &mut TextureManager,
     size: f32,
     show_texture: bool,
+    in_group: bool,
     edit_target: &mut Option<Arc<MediaItem>>,
     delete_request: &mut Option<Arc<MediaItem>>,
+    reorder_request: &mut Option<Arc<MediaItem>>,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
 
@@ -64,6 +66,17 @@ pub fn media_card(
         {
             *edit_target = Some(Arc::clone(item));
             ui.close();
+        }
+
+        if in_group {
+            if ui
+                .button("  Reorder group…")
+                .on_hover_cursor(CursorIcon::PointingHand)
+                .clicked()
+            {
+                *reorder_request = Some(Arc::clone(item));
+                ui.close();
+            }
         }
 
         ui.separator();

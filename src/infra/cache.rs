@@ -28,6 +28,19 @@ fn save_as_webp_lossy(path: &Path, img: &RgbaImage, quality: f32) {
     let _ = fs::write(path, &*webp_data);
 }
 
+pub fn remap_cache_entries(cache_dir: &Path, renames: &[(String, String, i64)]) {
+    for (old_path, new_path, modified) in renames {
+        if old_path == new_path {
+            continue;
+        }
+        let old_cache = preview_cache_path(cache_dir, old_path, *modified);
+        let new_cache = preview_cache_path(cache_dir, new_path, *modified);
+        if old_cache.exists() && !new_cache.exists() {
+            let _ = fs::rename(&old_cache, &new_cache);
+        }
+    }
+}
+
 pub fn load_or_generate(cache_dir: &Path, path: &str, thumb_size: u32) -> Option<RgbaImage> {
     let modified = fs::metadata(path)
         .and_then(|m| m.modified())

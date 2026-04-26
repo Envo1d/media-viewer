@@ -154,7 +154,7 @@ pub fn run_migrations(tx: &Transaction) {
     // • Add characters TEXT (scanner + user-editable)
     // • Add tags TEXT (user-managed only; never clobbered by scanner)
     // • Rebuild FTS5 table and all three triggers with new column set
-    // • FTS triggers use replace(col,'|',' ') so unicode61 tokenises each
+    // • FTS triggers use replace(col,'|',' ') so unicode61 tokenizes each
     // • pipe-separated value as an independent search token
     if version < 7 {
         tx.execute("ALTER TABLE media RENAME COLUMN category TO copyright", [])
@@ -284,7 +284,7 @@ pub fn run_migrations(tx: &Transaction) {
     // • Add case-insensitive name index to accelerate the default "Name A→Z"
     //   sort order query on the media table. Without this index, ORDER BY name
     //   on 50 k+ rows requires a full table scan on every page load.
-    // • Add case-insensitive name index on staging for consistent behaviour.
+    // • Add case-insensitive name index on staging for consistent behavior.
     if version < 9 {
         tx.execute(
             "CREATE INDEX IF NOT EXISTS idx_media_name ON media(name COLLATE NOCASE)",
@@ -299,6 +299,37 @@ pub fn run_migrations(tx: &Transaction) {
         .unwrap();
 
         version = 9;
+        set_version(tx, version);
+    }
+
+    // === MIGRATION 10 ===
+    // Replace the NOCASE name indexes added in migration 9 with NATURALSORT
+    // equivalents.  The old indexes are incompatible with the new ORDER BY
+    // clause (COLLATE NATURALSORT) so they would never be used, wasting space.
+    // The new indexes allow SQLite to satisfy ORDER BY name COLLATE NATURALSORT
+    // directly from the index without a sort step, keeping large-library queries
+    // fast.
+    if version < 10 {
+        tx.execute("DROP INDEX IF EXISTS idx_media_name", [])
+            .unwrap();
+        tx.execute("DROP INDEX IF EXISTS idx_staging_name", [])
+            .unwrap();
+
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_media_name \
+             ON media(name COLLATE NATURALSORT)",
+            [],
+        )
+        .unwrap();
+
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_staging_name \
+             ON staging(name COLLATE NATURALSORT)",
+            [],
+        )
+        .unwrap();
+
+        version = 10;
         set_version(tx, version);
     }
 }

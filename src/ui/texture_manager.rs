@@ -200,6 +200,47 @@ impl TextureManager {
         self.failed.clear();
     }
 
+    pub fn remap_paths(&mut self, renames: &[(String, String)]) {
+        let old_to_new: HashMap<&str, &str> = renames
+            .iter()
+            .filter(|(o, n)| o != n)
+            .map(|(o, n)| (o.as_str(), n.as_str()))
+            .collect();
+
+        if old_to_new.is_empty() {
+            return;
+        }
+
+        let mut extracted: Vec<(String, Option<TextureHandle>, Option<u64>)> =
+            Vec::with_capacity(renames.len());
+
+        for (old_path, new_path) in renames {
+            if old_path == new_path {
+                continue;
+            }
+            let tex = self.ready.remove(old_path);
+            let seq = self.insert_seq.remove(old_path);
+            self.loading.remove(old_path);
+            self.failed.remove(old_path);
+            extracted.push((new_path.clone(), tex, seq));
+        }
+
+        for (new_path, tex, seq) in extracted {
+            if let Some(t) = tex {
+                self.ready.insert(new_path.clone(), t);
+            }
+            if let Some(s) = seq {
+                self.insert_seq.insert(new_path.clone(), s);
+            }
+        }
+
+        for (path, _) in self.eviction_order.iter_mut() {
+            if let Some(&new) = old_to_new.get(path.as_str()) {
+                *path = new.to_owned();
+            }
+        }
+    }
+
     fn process_results(&mut self, ctx: &Context) {
         let deadline = Instant::now() + std::time::Duration::from_micros(UPLOAD_BUDGET_US as u64);
         let mut uploaded = 0usize;

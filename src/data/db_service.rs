@@ -137,7 +137,28 @@ impl DbService {
         get_db().send(DbCommand::DeleteByPath(path)).ok();
     }
 
+    pub fn rename_group_batch(renames: Vec<(String, String, String, String)>) {
+        get_db().send(DbCommand::RenameGroupBatch(renames)).ok();
+    }
+
     pub fn staging_delete_by_path(path: String) {
         get_db().send(DbCommand::StagingDeleteByPath(path)).ok();
+    }
+
+    pub fn query_group(
+        base_stem: String,
+        ext: String,
+        dir: String,
+    ) -> Receiver<Vec<Arc<MediaItem>>> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        get_read_db()
+            .send(DbCommand::QueryGroup {
+                base_stem,
+                ext,
+                dir,
+                resp: tx,
+            })
+            .ok();
+        rx
     }
 }

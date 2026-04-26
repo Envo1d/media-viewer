@@ -5,6 +5,7 @@ pub mod media_card;
 pub mod media_modal;
 pub mod media_view;
 pub mod modal_window;
+pub mod reorder_modal;
 pub mod search_input;
 pub mod settings_modal;
 pub mod sidebar;

@@ -26,3 +26,9 @@ usvg = "0.45.1"
 
 [build-dependencies]
 winres = { version = "0.1.12" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

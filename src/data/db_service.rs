@@ -145,16 +145,11 @@ impl DbService {
         get_db().send(DbCommand::StagingDeleteByPath(path)).ok();
     }
 
-    pub fn query_group(
-        base_stem: String,
-        ext: String,
-        dir: String,
-    ) -> Receiver<Vec<Arc<MediaItem>>> {
+    pub fn query_group(base_stem: String, dir: String) -> Receiver<Vec<Arc<MediaItem>>> {
         let (tx, rx) = crossbeam_channel::bounded(1);
         get_read_db()
             .send(DbCommand::QueryGroup {
                 base_stem,
-                ext,
                 dir,
                 resp: tx,
             })

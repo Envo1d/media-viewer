@@ -401,12 +401,16 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
     let icons = app.icons.as_ref().unwrap();
 
     let (title, is_distribute, is_video) = match &app.modal_state.mode {
-        Some(MediaModalMode::Edit(_)) => ("Edit Metadata", false, false),
-        Some(MediaModalMode::Distribute(item)) => (
-            "Distribute to Library",
-            true,
-            matches!(item.media_type, MediaType::Video),
-        ),
+        Some(MediaModalMode::Edit(_)) => ("Edit Metadata".to_owned(), false, false),
+        Some(MediaModalMode::Distribute(item)) => {
+            let queue_remaining = app.distribute_queue.len();
+            let title = if queue_remaining > 0 {
+                format!("Distribute to Library ({} more after this)", queue_remaining)
+            } else {
+                "Distribute to Library".to_owned()
+            };
+            (title, true, matches!(item.media_type, MediaType::Video))
+        }
         None => return ModalAction::None,
     };
 
@@ -431,7 +435,7 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
             None => String::new(),
         };
 
-        if modal_header(ui, title, Some(name), 52.0, &close_icon) {
+        if modal_header(ui, &title, Some(name), 52.0, &close_icon) {
             action = ModalAction::Close;
         }
 
@@ -543,10 +547,10 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
                                             egui::TextEdit::singleline(
                                                 &mut app.modal_state.video_title,
                                             )
-                                            .hint_text("Leave empty to use original filename…")
-                                            .frame(Frame::NONE)
-                                            .desired_width(f32::INFINITY)
-                                            .text_color(C_TEXT),
+                                                .hint_text("Leave empty to use original filename…")
+                                                .frame(Frame::NONE)
+                                                .desired_width(f32::INFINITY)
+                                                .text_color(C_TEXT),
                                         );
                                     });
                                 });
@@ -560,7 +564,7 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
                         egui::Label::new(
                             RichText::new(format!("⚠ {err}")).size(11.0).color(DANGER),
                         )
-                        .wrap(),
+                            .wrap(),
                     );
                     ui.add_space(10.0);
                 }

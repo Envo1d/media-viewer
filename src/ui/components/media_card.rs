@@ -1,8 +1,8 @@
 use crate::core::models::{MediaItem, MediaType};
 use crate::ui::colors::{CARD_BG, DANGER};
 use crate::ui::components::card_primitives::{
-    draw_card_border, draw_hover_label, draw_hover_tint, draw_info_bar, draw_thumbnail, draw_video_badge,
-    CARD_CR, INFO_H,
+    draw_card_border, draw_hover_label, draw_hover_tint, draw_info_bar, draw_selection_tint, draw_thumbnail,
+    draw_video_badge, CARD_CR, INFO_H,
 };
 use crate::ui::texture_manager::TextureManager;
 use crate::utils::file_helpers::reveal_in_explorer;
@@ -30,9 +30,13 @@ pub fn media_card(
     size: f32,
     show_texture: bool,
     in_group: bool,
+    is_selected: bool,
+    selection_count: usize,
     edit_target: &mut Option<Arc<MediaItem>>,
     delete_request: &mut Option<Arc<MediaItem>>,
     reorder_request: &mut Option<Arc<MediaItem>>,
+    bulk_delete_request: &mut bool,
+    toggle_select: &mut bool,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
 
@@ -100,6 +104,20 @@ pub fn media_card(
 
         ui.separator();
 
+        if is_selected && selection_count > 1 {
+            if ui
+                .add(egui::Button::new(
+                    egui::RichText::new(format!("  Delete {selection_count} selected…"))
+                        .color(DANGER),
+                ))
+                .on_hover_cursor(CursorIcon::PointingHand)
+                .clicked()
+            {
+                *bulk_delete_request = true;
+                ui.close();
+            }
+        }
+
         if ui
             .add(egui::Button::new(
                 egui::RichText::new("  Delete file…").color(DANGER),
@@ -115,7 +133,11 @@ pub fn media_card(
     });
 
     if response.clicked() {
-        let _ = open::that(&item.path);
+        if ui.input(|i| i.modifiers.ctrl) {
+            *toggle_select = true;
+        } else {
+            let _ = open::that(&item.path);
+        }
     }
 
     if !ui.is_rect_visible(rect) {
@@ -124,7 +146,6 @@ pub fn media_card(
 
     let is_hovered = response.hovered();
     let inner = ui.painter().with_clip_rect(rect);
-    let outer = ui.painter();
 
     inner.rect_filled(rect, CARD_CR, CARD_BG);
 
@@ -141,7 +162,9 @@ pub fn media_card(
         draw_video_badge(&inner, img_area, size);
     }
 
-    if is_hovered {
+    if is_selected {
+        draw_selection_tint(&inner, img_area);
+    } else if is_hovered {
         draw_hover_tint(&inner, img_area);
         let meta = hover_meta(item);
         let meta_sz = (size * 0.051).clamp(9.0, 11.5);
@@ -153,11 +176,14 @@ pub fn media_card(
             truncate(&meta, max_ch).as_ref(),
             size,
         );
+    }
+
+    if is_hovered {
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     }
 
     draw_info_bar(&inner, rect, &item.name, size);
-    draw_card_border(outer, rect, is_hovered);
+    draw_card_border(&inner, rect, is_hovered, is_selected);
 
     response
 }

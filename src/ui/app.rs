@@ -105,6 +105,11 @@ pub struct MediaApp {
 
     // Reorder modal state (None when closed)
     pub reorder_state: Option<ReorderState>,
+
+    // Multi-selection
+    pub selection: std::collections::HashSet<String>,
+    pub selection_anchor: Option<String>,
+    pub distribute_queue: Vec<Arc<StagingItem>>,
 }
 
 impl MediaApp {
@@ -202,6 +207,9 @@ impl MediaApp {
             staging_filtered: Vec::new(),
             staging_last_search: String::new(),
             reorder_state: None,
+            selection: std::collections::HashSet::new(),
+            selection_anchor: None,
+            distribute_queue: Vec::new(),
         };
 
         app.refresh_items();
@@ -596,6 +604,7 @@ impl MediaApp {
 
     pub fn refresh_items(&mut self) {
         self.is_loading_more = false;
+        self.clear_selection();
         self.send_query();
     }
 
@@ -672,7 +681,6 @@ impl MediaApp {
                                 self.displayed_items
                                     .sort_unstable_by(|a, b| natural_cmp(&b.name, &a.name));
                             }
-
                             _ => {}
                         }
 
@@ -754,14 +762,6 @@ impl MediaApp {
         }
     }
 
-    pub fn request_delete_library(&mut self, item: Arc<MediaItem>) {
-        self.pending_delete = Some(PendingDelete::Library(item));
-    }
-
-    pub fn request_delete_staging(&mut self, item: Arc<StagingItem>) {
-        self.pending_delete = Some(PendingDelete::Staging(item));
-    }
-
     pub fn do_delete_library(&mut self, item: Arc<MediaItem>) {
         let deleted_path = PathBuf::from(&item.path);
 
@@ -817,6 +817,56 @@ impl MediaApp {
         }
     }
 
+    pub fn clear_selection(&mut self) {
+        self.selection.clear();
+        self.selection_anchor = None;
+    }
+
+    pub fn do_delete_bulk_library(&mut self, items: Vec<Arc<MediaItem>>) {
+        for item in items {
+            let deleted_path = PathBuf::from(&item.path);
+            if let Err(e) = delete(&item.path) {
+                eprintln!("[bulk-delete] failed to trash {}: {e}", item.path);
+                continue;
+            }
+            DbService::delete_by_path(item.path.clone());
+            self.displayed_items.retain(|i| i.path != item.path);
+            self.selection.remove(&item.path);
+
+            let renames = crate::utils::file_helpers::reindex_after_delete(&deleted_path);
+            for (old_path, new_path, new_name) in renames {
+                DbService::rename_media_path(old_path.clone(), new_path.clone(), new_name.clone());
+                for arc in &mut self.displayed_items {
+                    if arc.path == old_path {
+                        *arc = Arc::new(MediaItem {
+                            path: new_path.clone(),
+                            name: new_name.clone(),
+                            ..(**arc).clone()
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+        self.rebuild_display_index();
+        self.request_stats_from_items();
+        self.clear_selection();
+    }
+
+    pub fn do_delete_bulk_staging(&mut self, items: Vec<Arc<StagingItem>>) {
+        for item in items {
+            if let Err(e) = delete(&item.path) {
+                eprintln!("[bulk-delete] failed to trash {}: {e}", item.path);
+                continue;
+            }
+            DbService::staging_delete_by_path(item.path.clone());
+            self.staging_items.retain(|i| i.path != item.path);
+            self.selection.remove(&item.path);
+        }
+        self.rebuild_staging_filtered();
+        self.clear_selection();
+    }
+
     pub fn open_reorder_modal(&mut self, item: Arc<MediaItem>) {
         let path = Path::new(&item.path);
         let dir = path.parent().map(|d| d.to_path_buf()).unwrap_or_default();
@@ -836,6 +886,15 @@ impl MediaApp {
 
     pub fn open_distribute_modal(&mut self, item: Arc<StagingItem>) {
         self.modal_state.open_distribute(item, &self.autocomplete);
+    }
+
+    pub fn open_distribute_queue(&mut self, mut items: Vec<Arc<StagingItem>>) {
+        if items.is_empty() {
+            return;
+        }
+        let first = items.remove(0);
+        self.distribute_queue = items;
+        self.open_distribute_modal(first);
     }
 
     fn do_distribute(&mut self) {
@@ -935,10 +994,28 @@ impl MediaApp {
 
         self.staging_items.retain(|i| i.path != staging_item.path);
         self.rebuild_staging_filtered();
-        self.modal_state.close();
 
         self.request_autocomplete();
         self.request_stats_from_items();
+
+        if !self.distribute_queue.is_empty() {
+            let next_item = self.distribute_queue.remove(0);
+
+            let saved_copyright = self.modal_state.copyright.clone();
+            let saved_artist = self.modal_state.artist.clone();
+            let saved_characters = self.modal_state.characters.clone();
+            let saved_tags = self.modal_state.tags.clone();
+
+            self.modal_state
+                .open_distribute(next_item, &self.autocomplete);
+
+            self.modal_state.copyright = saved_copyright;
+            self.modal_state.artist = saved_artist;
+            self.modal_state.characters = saved_characters;
+            self.modal_state.tags = saved_tags;
+        } else {
+            self.modal_state.close();
+        }
     }
 }
 
@@ -992,7 +1069,10 @@ impl eframe::App for MediaApp {
                     match action {
                         ModalAction::SaveEdit => self.do_save_edit(),
                         ModalAction::Distribute => self.do_distribute(),
-                        ModalAction::Close => self.modal_state.close(),
+                        ModalAction::Close => {
+                            self.modal_state.close();
+                            self.distribute_queue.clear();
+                        }
                         ModalAction::None => {}
                     }
                 }

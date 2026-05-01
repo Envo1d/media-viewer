@@ -14,24 +14,44 @@ pub fn delete_confirm_modal(app: &mut MediaApp, ui: &egui::Ui) {
         return;
     };
 
-    let (filename, path_preview) = match pending {
-        PendingDelete::Library(item) => (item.name.clone(), item.path.clone()),
-        PendingDelete::Staging(item) => (item.name.clone(), item.path.clone()),
-    };
-
-    let dir_path = Path::new(&path_preview)
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    let shown_path = if dir_path.len() > 60 {
-        format!("…{}", &dir_path[dir_path.len() - 58..])
-    } else {
-        dir_path
+    let (title, body_line1, body_line2) = match pending {
+        PendingDelete::Library(item) => {
+            let dir = Path::new(&item.path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let shown = if dir.len() > 60 {
+                format!("…{}", &dir[dir.len() - 58..])
+            } else {
+                dir
+            };
+            ("Delete file?".to_owned(), item.name.clone(), shown)
+        }
+        PendingDelete::Staging(item) => {
+            let dir = Path::new(&item.path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let shown = if dir.len() > 60 {
+                format!("…{}", &dir[dir.len() - 58..])
+            } else {
+                dir
+            };
+            ("Delete file?".to_owned(), item.name.clone(), shown)
+        }
+        PendingDelete::BulkLibrary(items) => (
+            format!("Delete {} files?", items.len()),
+            format!("{} files will be permanently deleted.", items.len()),
+            String::new(),
+        ),
+        PendingDelete::BulkStaging(items) => (
+            format!("Delete {} files?", items.len()),
+            format!("{} files will be permanently deleted.", items.len()),
+            String::new(),
+        ),
     };
 
     let ctx = ui.ctx();
-
     let mut confirmed = false;
     let mut cancelled = false;
 
@@ -46,28 +66,29 @@ pub fn delete_confirm_modal(app: &mut MediaApp, ui: &egui::Ui) {
                 ui.set_width(372.0);
                 ui.style_mut().interaction.selectable_labels = false;
 
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("Delete file?")
-                            .size(16.0)
-                            .color(C_TEXT_HEADER)
-                            .strong(),
-                    );
-                });
+                ui.label(
+                    RichText::new(&title)
+                        .size(16.0)
+                        .color(C_TEXT_HEADER)
+                        .strong(),
+                );
+
                 ui.add_space(10.0);
 
-                ui.label(RichText::new(&filename).size(12.5).color(C_TEXT));
-                ui.add_space(4.0);
+                ui.label(RichText::new(&body_line1).size(12.5).color(C_TEXT));
+                if !body_line2.is_empty() {
+                    ui.add_space(4.0);
 
-                ui.add(
-                    egui::Label::new(RichText::new(&shown_path).size(10.5).color(C_TEXT_MUTED))
-                        .wrap(),
-                );
+                    ui.add(
+                        egui::Label::new(RichText::new(&body_line2).size(10.5).color(C_TEXT_MUTED))
+                            .wrap(),
+                    );
+                }
                 ui.add_space(6.0);
 
                 ui.add(
                     egui::Label::new(
-                        RichText::new("This will permanently delete the file from disk.")
+                        RichText::new("This will permanently delete the file(s) from disk.")
                             .size(11.0)
                             .color(DANGER),
                     )
@@ -160,6 +181,8 @@ pub fn delete_confirm_modal(app: &mut MediaApp, ui: &egui::Ui) {
         match pending {
             PendingDelete::Library(item) => app.do_delete_library(item),
             PendingDelete::Staging(item) => app.do_delete_staging(item),
+            PendingDelete::BulkLibrary(items) => app.do_delete_bulk_library(items),
+            PendingDelete::BulkStaging(items) => app.do_delete_bulk_staging(items),
         }
     } else if cancelled {
         app.pending_delete = None;

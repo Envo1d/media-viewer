@@ -1,8 +1,8 @@
 use crate::core::models::{MediaType, StagingItem};
 use crate::ui::colors::{CARD_BG, DANGER};
 use crate::ui::components::card_primitives::{
-    draw_card_border, draw_hover_label, draw_hover_tint, draw_info_bar, draw_thumbnail, draw_video_badge,
-    CARD_CR, INFO_H,
+    draw_card_border, draw_hover_label, draw_hover_tint, draw_info_bar, draw_selection_tint, draw_thumbnail,
+    draw_video_badge, CARD_CR, INFO_H,
 };
 use crate::ui::texture_manager::TextureManager;
 use crate::utils::file_helpers::reveal_in_explorer;
@@ -15,8 +15,13 @@ pub fn staging_card(
     texture_manager: &mut TextureManager,
     size: f32,
     show_texture: bool,
+    is_selected: bool,
+    selection_count: usize,
     distribute_target: &mut Option<Arc<StagingItem>>,
     delete_request: &mut Option<Arc<StagingItem>>,
+    bulk_delete_request: &mut bool,
+    bulk_distribute_request: &mut bool,
+    toggle_select: &mut bool,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
 
@@ -52,6 +57,17 @@ pub fn staging_card(
             ui.close();
         }
 
+        if is_selected && selection_count > 1 {
+            if ui
+                .button(format!("  Distribute {selection_count} selected…"))
+                .on_hover_cursor(CursorIcon::PointingHand)
+                .clicked()
+            {
+                *bulk_distribute_request = true;
+                ui.close();
+            }
+        }
+
         ui.separator();
 
         if ui
@@ -64,6 +80,20 @@ pub fn staging_card(
         }
 
         ui.separator();
+
+        if is_selected && selection_count > 1 {
+            if ui
+                .add(egui::Button::new(
+                    egui::RichText::new(format!("  Delete {selection_count} selected…"))
+                        .color(DANGER),
+                ))
+                .on_hover_cursor(CursorIcon::PointingHand)
+                .clicked()
+            {
+                *bulk_delete_request = true;
+                ui.close();
+            }
+        }
 
         if ui
             .add(egui::Button::new(
@@ -79,8 +109,16 @@ pub fn staging_card(
         ui.add_space(2.0);
     });
 
-    if response.clicked() {
+    if response.double_clicked() {
         *distribute_target = Some(Arc::clone(item));
+    }
+
+    if response.clicked() {
+        if ui.input(|i| i.modifiers.ctrl) {
+            *toggle_select = true;
+        } else {
+            let _ = open::that(&item.path);
+        }
     }
 
     if !ui.is_rect_visible(rect) {
@@ -89,7 +127,6 @@ pub fn staging_card(
 
     let is_hovered = response.hovered();
     let inner = ui.painter().with_clip_rect(rect);
-    let outer = ui.painter();
 
     inner.rect_filled(rect, CARD_CR, CARD_BG);
 
@@ -106,14 +143,19 @@ pub fn staging_card(
         draw_video_badge(&inner, img_area, size);
     }
 
-    if is_hovered {
+    if is_selected {
+        draw_selection_tint(&inner, img_area);
+    } else if is_hovered {
         draw_hover_tint(&inner, img_area);
-        draw_hover_label(&inner, rect, img_area, "Click to distribute", size);
+        draw_hover_label(&inner, rect, img_area, "Double-Click to distribute", size);
+    }
+
+    if is_hovered {
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     }
 
     draw_info_bar(&inner, rect, &item.name, size);
-    draw_card_border(outer, rect, is_hovered);
+    draw_card_border(&inner, rect, is_hovered, is_selected);
 
     response
 }

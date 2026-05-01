@@ -8,6 +8,13 @@ use egui::{Align2, Color32, CornerRadius, FontId, Pos2, Rect, Stroke, StrokeKind
 pub const CARD_CR: u8 = 8;
 pub const INFO_H: f32 = 30.0;
 
+const IMG_CR: CornerRadius = CornerRadius {
+    nw: CARD_CR,
+    ne: CARD_CR,
+    sw: 0,
+    se: 0,
+};
+
 pub fn draw_thumbnail(
     painter: &egui::Painter,
     img_area: Rect,
@@ -60,7 +67,12 @@ pub fn draw_video_badge(painter: &egui::Painter, img_area: Rect, card_size: f32)
 }
 
 pub fn draw_hover_tint(painter: &egui::Painter, img_area: Rect) {
-    painter.rect_filled(img_area, 0.0, HOVER_TINT);
+    painter.rect_filled(img_area, IMG_CR, HOVER_TINT);
+}
+
+pub fn draw_selection_tint(painter: &egui::Painter, img_area: Rect) {
+    const SEL_TINT: Color32 = Color32::from_rgba_premultiplied(88, 101, 242, 55);
+    painter.rect_filled(img_area, IMG_CR, SEL_TINT);
 }
 
 pub fn draw_hover_label(
@@ -115,14 +127,13 @@ pub fn draw_info_bar(painter: &egui::Painter, card_rect: Rect, name: &str, card_
     );
 }
 
-pub fn draw_card_border(outer: &egui::Painter, rect: Rect, is_hovered: bool) {
-    outer.rect_stroke(
-        rect,
-        CARD_CR,
-        Stroke::new(
-            if is_hovered { 1.5 } else { 1.0 },
-            if is_hovered { C_BLURPLE } else { BORDER },
-        ),
-        StrokeKind::Outside,
-    );
+pub fn draw_card_border(outer: &egui::Painter, rect: Rect, is_hovered: bool, is_selected: bool) {
+    let (width, color) = if is_selected {
+        (2.0, C_BLURPLE)
+    } else if is_hovered {
+        (1.5, C_BLURPLE)
+    } else {
+        (1.0, BORDER)
+    };
+    outer.rect_stroke(rect, CARD_CR, Stroke::new(width, color), StrokeKind::Inside);
 }

@@ -539,11 +539,11 @@ impl Database {
             })
     }
 
-    pub fn query_group(&self, base_stem: &str, ext: &str, dir: &str) -> Vec<MediaItem> {
+    pub fn query_group(&self, base_stem: &str, dir: &str) -> Vec<MediaItem> {
         let esc = |s: &str| s.replace('|', "||").replace('%', "|%").replace('_', "|_");
 
-        let plain_name = format!("{}.{}", base_stem, ext);
-        let suffixed_like = format!("{} - %.{}", esc(base_stem), esc(ext));
+        let plain_like = format!("{}|_.%", esc(base_stem));
+        let suffixed_like = format!("{} - %", esc(base_stem));
 
         let sep = if dir.ends_with(['/', '\\']) {
             ""
@@ -555,7 +555,7 @@ impl Database {
         let sql = format!(
             "SELECT {c} FROM media \
              WHERE path LIKE ? ESCAPE '|' \
-               AND (name = ? OR name LIKE ? ESCAPE '|') \
+               AND (name LIKE ? ESCAPE '|' OR name LIKE ? ESCAPE '|') \
              ORDER BY path ASC",
             c = SELECT_COLS,
         );
@@ -569,7 +569,7 @@ impl Database {
         };
 
         stmt.query_map(
-            rusqlite::params![dir_prefix_like, plain_name, suffixed_like],
+            rusqlite::params![dir_prefix_like, plain_like, suffixed_like],
             map_media_item,
         )
         .map(|it| it.filter_map(Result::ok).collect())

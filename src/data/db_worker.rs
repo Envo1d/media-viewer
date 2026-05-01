@@ -138,11 +138,10 @@ fn start_read_worker(write_ready_rx: crossbeam_channel::Receiver<()>) -> Sender<
 
                         DbCommand::QueryGroup {
                             base_stem,
-                            ext,
                             dir,
                             resp,
                         } => {
-                            let items = db.query_group(&base_stem, &ext, &dir);
+                            let items = db.query_group(&base_stem, &dir);
                             let arced: Vec<Arc<_>> = items.into_iter().map(Arc::new).collect();
                             let _ = resp.send(arced);
                         }

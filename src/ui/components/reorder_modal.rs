@@ -1,5 +1,6 @@
 use crate::core::models::{MediaItem, ReorderAction};
 use crate::data::db_service::DbService;
+use crate::infra::config::AppConfig;
 use crate::ui::app::MediaApp;
 use crate::ui::colors::{
     BORDER, CARD_BG, C_BLURPLE, C_TEXT, C_TEXT_HEADER, C_TEXT_MUTED, DANGER, SECTION_BG,
@@ -49,7 +50,7 @@ pub struct ReorderState {
 impl ReorderState {
     pub fn new(base_stem: String, ext: String, dir: PathBuf) -> Self {
         let dir_str = dir.to_string_lossy().to_string();
-        let rx = DbService::query_group(base_stem.clone(), ext.clone(), dir_str);
+        let rx = DbService::query_group(base_stem.clone(), dir_str);
         Self {
             items: Vec::new(),
             base_stem,
@@ -508,7 +509,7 @@ pub fn do_apply_reorder(app: &mut MediaApp) {
 
             app.texture_manager.remap_paths(&path_pairs);
 
-            let cache_dir = crate::infra::config::AppConfig::get_cache_dir();
+            let cache_dir = AppConfig::get_cache_dir();
             std::thread::spawn(move || {
                 crate::infra::cache::remap_cache_entries(&cache_dir, &cache_triples);
             });

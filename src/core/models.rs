@@ -1,4 +1,5 @@
 use crossbeam_channel::Sender;
+use egui::Pos2;
 use std::cmp::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
@@ -231,7 +232,6 @@ pub enum DbCommand {
     // Reorder group query
     QueryGroup {
         base_stem: String,
-        ext: String,
         dir: String,
         resp: Sender<Vec<Arc<MediaItem>>>,
     },
@@ -320,6 +320,8 @@ pub enum MediaModalMode {
 pub enum PendingDelete {
     Library(Arc<MediaItem>),
     Staging(Arc<StagingItem>),
+    BulkLibrary(Vec<Arc<MediaItem>>),
+    BulkStaging(Vec<Arc<StagingItem>>),
 }
 
 // Reorder Media
@@ -327,4 +329,12 @@ pub enum ReorderAction {
     None,
     Apply,
     Close,
+}
+
+// Select
+#[derive(Default, Clone, Copy)]
+pub struct RubberBand {
+    pub active: bool,
+    pub start: Pos2,
+    pub current: Pos2,
 }

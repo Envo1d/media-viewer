@@ -1,6 +1,6 @@
 [package]
 name = "Nexa"
-version = "0.3.4"
+version = "0.9.0"
 edition = "2024"
 
 [dependencies]
@@ -9,7 +9,7 @@ egui_extras = { version = "0.34.1", features = ["image", "svg"] }
 eframe = { version = "0.34.1", features = ["glow"] }
 image = { version = "0.25.10" }
 webp = { version = "0.3.1" }
-open = { version = "5.3.3" }
+open = { version = "5.3.4" }
 rusqlite = { version = "0.39.0", features = ["bundled", "collation"] }
 rfd = { version = "0.17.2" }
 serde = { version = "1.0.228", features = ["derive"] }

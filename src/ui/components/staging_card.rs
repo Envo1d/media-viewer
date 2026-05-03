@@ -109,15 +109,11 @@ pub fn staging_card(
         ui.add_space(2.0);
     });
 
-    if response.double_clicked() {
-        *distribute_target = Some(Arc::clone(item));
-    }
-
     if response.clicked() {
         if ui.input(|i| i.modifiers.ctrl) {
             *toggle_select = true;
         } else {
-            let _ = open::that(&item.path);
+            *distribute_target = Some(Arc::clone(item));
         }
     }
 
@@ -147,7 +143,7 @@ pub fn staging_card(
         draw_selection_tint(&inner, img_area);
     } else if is_hovered {
         draw_hover_tint(&inner, img_area);
-        draw_hover_label(&inner, rect, img_area, "Double-Click to distribute", size);
+        draw_hover_label(&inner, rect, img_area, "Click to distribute", size);
     }
 
     if is_hovered {

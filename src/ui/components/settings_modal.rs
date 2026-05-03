@@ -4,6 +4,7 @@ use crate::ui::colors::{C_BLURPLE, C_INPUT_BG, C_TEXT, C_TEXT_MUTED, DANGER};
 use crate::ui::components::modal_window::{
     modal_backdrop, modal_frame_window, modal_header, modal_separator,
 };
+use crate::ui::components::update_section::update_section;
 use crate::ui::components::widgets::combo_box::combo_box;
 use crate::ui::components::widgets::danger_button::danger_button;
 use crate::ui::components::widgets::pill_button::pill_button;
@@ -477,6 +478,7 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
                         indexing_section(app, ui);
                         appearance_section(app, ui);
                         cache_section(app, ui);
+                        update_section(app, ui);
                     });
 
                 ui.add_space(18.0);

@@ -13,6 +13,8 @@ pub mod staging_card;
 pub mod staging_sidebar;
 pub mod staging_view;
 pub mod title_bar;
+pub mod update_badge;
+pub mod update_section;
 pub mod widgets;
 
 pub use delete_confirm_modal::delete_confirm_modal;

@@ -1,11 +1,16 @@
 use crate::core::models::{
     AutocompleteData, FieldFilter, LibraryStats, MediaFilter, MediaItem, MediaModalMode, MediaType,
-    ModalAction, PendingDelete, ReorderAction, ResolvedName, SortOrder, StagingItem, ViewMode,
+    ModalAction, PendingDelete, ReorderAction, ResolvedName, SortOrder, StagingItem, UpdateEvent,
+    UpdateState, ViewMode,
 };
 use crate::data::db_service::DbService;
 use crate::data::db_worker::init_db;
 use crate::infra::cache;
 use crate::infra::config::AppConfig;
+use crate::infra::updater::{
+    apply_update_and_restart, cleanup_leftover_files, cleanup_staged_downloads, update_staging_dir,
+    UpdateWorker,
+};
 use crate::infra::window_effects::WindowEffects;
 use crate::ui::colors::C_PRIMARY_BG;
 use crate::ui::components;
@@ -14,6 +19,7 @@ use crate::ui::components::reorder_modal::{do_apply_reorder, reorder_modal, Reor
 use crate::ui::components::sidebar::sidebar;
 use crate::ui::components::staging_sidebar::staging_sidebar;
 use crate::ui::components::staging_view::staging_view;
+use crate::ui::components::update_badge::update_toast;
 use crate::ui::fonts::setup_fonts;
 use crate::ui::icon_registry::IconRegistry;
 use crate::ui::scan_manager::ScanManager;
@@ -110,6 +116,10 @@ pub struct MediaApp {
     pub selection: std::collections::HashSet<String>,
     pub selection_anchor: Option<String>,
     pub distribute_queue: Vec<Arc<StagingItem>>,
+
+    // Auto-update
+    pub update_worker: UpdateWorker,
+    pub update_state: UpdateState,
 }
 
 impl MediaApp {
@@ -165,6 +175,14 @@ impl MediaApp {
             .checked_sub(AUTOCOMPLETE_DEBOUNCE + Duration::from_secs(1))
             .unwrap_or_else(Instant::now);
 
+        cleanup_leftover_files();
+        cleanup_staged_downloads();
+
+        let update_worker = UpdateWorker::spawn();
+        if config.auto_update_check {
+            update_worker.check();
+        }
+
         let mut app = Self {
             config: config.clone(),
             texture_manager: TextureManager::new(&cc.egui_ctx),
@@ -210,6 +228,8 @@ impl MediaApp {
             selection: std::collections::HashSet::new(),
             selection_anchor: None,
             distribute_queue: Vec::new(),
+            update_worker,
+            update_state: UpdateState::Idle,
         };
 
         app.refresh_items();
@@ -234,6 +254,89 @@ impl MediaApp {
         }
 
         app
+    }
+
+    pub fn poll_updater(&mut self, ctx: &Context) {
+        let events = self.update_worker.poll();
+        if events.is_empty() {
+            return;
+        }
+        for event in events {
+            match event {
+                UpdateEvent::StateChanged(state) => {
+                    self.update_state = state;
+                    ctx.request_repaint();
+                }
+                UpdateEvent::DownloadProgress {
+                    bytes_done: ev_bytes_done,
+                    total_bytes: ev_total_bytes,
+                    progress: ev_progress,
+                } => {
+                    if let UpdateState::Downloading {
+                        ref mut progress,
+                        bytes_done: ref mut bd,
+                        total_bytes: ref mut tb,
+                        ..
+                    } = self.update_state
+                    {
+                        *progress = ev_progress;
+                        *bd = ev_bytes_done;
+                        *tb = ev_total_bytes;
+                    } else if let UpdateState::Available { ref version, .. } =
+                        self.update_state.clone()
+                    {
+                        self.update_state = UpdateState::Downloading {
+                            version: version.clone(),
+                            progress: ev_progress,
+                            bytes_done: ev_bytes_done,
+                            total_bytes: ev_total_bytes,
+                        };
+                    }
+                    ctx.request_repaint();
+                }
+            }
+        }
+    }
+
+    pub fn start_update_check(&mut self) {
+        self.update_state = UpdateState::Checking;
+        self.update_worker.check();
+    }
+
+    pub fn start_update_download(&mut self) {
+        if let UpdateState::Available {
+            ref version,
+            ref download_url,
+            size_bytes,
+        } = self.update_state.clone()
+        {
+            let version = version.clone();
+            let url = download_url.clone();
+            self.update_state = UpdateState::Downloading {
+                version: version.clone(),
+                progress: 0.0,
+                bytes_done: 0,
+                total_bytes: size_bytes,
+            };
+            self.update_worker
+                .download(version, url, update_staging_dir());
+        }
+    }
+
+    pub fn cancel_update_download(&mut self) {
+        self.update_worker.cancel_download();
+        self.update_state = UpdateState::Idle;
+    }
+
+    pub fn apply_update(&mut self) {
+        if let UpdateState::ReadyToInstall {
+            ref staged_path, ..
+        } = self.update_state.clone()
+        {
+            if let Err(e) = apply_update_and_restart(staged_path) {
+                self.update_state = UpdateState::Error(e);
+            }
+        }
     }
 
     pub fn toggle_field_filter(&mut self, f: FieldFilter) {
@@ -1029,6 +1132,7 @@ impl eframe::App for MediaApp {
         self.poll_stats(&ctx);
         self.poll_autocomplete(&ctx);
         self.poll_staging(&ctx);
+        self.poll_updater(&ctx);
         self.handle_search_input(&ctx);
         self.maybe_flush_autocomplete();
         self.texture_manager.update(&ctx);
@@ -1087,6 +1191,8 @@ impl eframe::App for MediaApp {
                         ReorderAction::None => {}
                     }
                 }
+
+                update_toast(self, ui);
 
                 egui::CentralPanel::default().show_inside(ui, |ui| match self.view_mode {
                     ViewMode::Library => components::media_view(self, ui),

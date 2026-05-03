@@ -1,6 +1,8 @@
 use crossbeam_channel::Sender;
 use egui::Pos2;
+use serde::Deserialize;
 use std::cmp::Ordering;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -337,4 +339,61 @@ pub struct RubberBand {
     pub active: bool,
     pub start: Pos2,
     pub current: Pos2,
+}
+
+// Updater
+#[derive(Debug, Clone)]
+pub enum UpdateState {
+    Idle,
+    Checking,
+    UpToDate,
+    Available {
+        version: String,
+        download_url: String,
+        size_bytes: u64,
+    },
+    Downloading {
+        version: String,
+        progress: f32,
+        bytes_done: u64,
+        total_bytes: u64,
+    },
+    ReadyToInstall {
+        version: String,
+        staged_path: PathBuf,
+    },
+    Error(String),
+}
+
+pub enum UpdateCmd {
+    Check,
+    Download {
+        version: String,
+        url: String,
+        dest_dir: PathBuf,
+    },
+    CancelDownload,
+}
+
+#[derive(Debug)]
+pub enum UpdateEvent {
+    StateChanged(UpdateState),
+    DownloadProgress {
+        bytes_done: u64,
+        total_bytes: u64,
+        progress: f32,
+    },
+}
+
+#[derive(Deserialize)]
+pub struct GhRelease {
+    pub tag_name: String,
+    pub assets: Vec<GhAsset>,
+}
+
+#[derive(Deserialize)]
+pub struct GhAsset {
+    pub name: String,
+    pub browser_download_url: String,
+    pub size: u64,
 }

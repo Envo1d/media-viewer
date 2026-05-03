@@ -1,6 +1,6 @@
 [package]
 name = "Nexa"
-version = "0.9.0"
+version = "1.0.0"
 edition = "2024"
 
 [dependencies]
@@ -23,6 +23,8 @@ ignore = { version = "0.4.25" }
 notify = { version = "8.2.0" }
 trash = { version = "5.2.5" }
 usvg = "0.45.1"
+ureq = { version = "3.3.0", features = ["json"] }
+semver = { version = "1.0.28" }
 
 [build-dependencies]
 winres = { version = "0.1.12" }

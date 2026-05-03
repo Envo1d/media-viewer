@@ -33,6 +33,10 @@ fn default_video_subfolder() -> String {
     String::new()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppConfig {
     pub library_path: Option<PathBuf>,
@@ -50,6 +54,9 @@ pub struct AppConfig {
 
     #[serde(default = "default_video_subfolder")]
     pub video_subfolder: String,
+
+    #[serde(default = "default_true")]
+    pub auto_update_check: bool,
 }
 
 impl Default for AppConfig {
@@ -64,6 +71,7 @@ impl Default for AppConfig {
             character_separator: default_char_sep(),
             staging_path: None,
             video_subfolder: default_video_subfolder(),
+            auto_update_check: true,
         }
     }
 }

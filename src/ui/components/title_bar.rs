@@ -3,6 +3,7 @@ use crate::ui::app::MediaApp;
 use crate::ui::colors::{
     BORDER, C_BLURPLE, C_INPUT_BG, C_TEXT_MUTED, HOVER_CLOSE, HOVER_STANDARD, ICON_IDLE,
 };
+use crate::ui::components::update_badge::draw_update_badge;
 use egui::{Color32, CursorIcon, FontId, Id, Image, PointerButton, Pos2, Rect, Sense, Vec2};
 
 const ICON_SIZE: f32 = 12.0;
@@ -105,9 +106,7 @@ fn view_toggle(ui: &mut egui::Ui, current: &mut ViewMode) {
     p.rect_filled(pill_inset, TOGGLE_CR - 1.0, C_BLURPLE);
 
     let lib_color = lerp_color(Color32::WHITE, C_TEXT_MUTED, t);
-
     let stg_color = lerp_color(C_TEXT_MUTED, Color32::WHITE, t);
-
     let font = FontId::proportional(11.5);
 
     p.text(
@@ -177,7 +176,9 @@ pub fn title_bar(ui: &mut egui::Ui, app: &mut MediaApp) {
 
             ui.add_space(12.0);
 
-            if chrome_btn(ui, HOVER_STANDARD, icons.get("settings")).clicked() {
+            let settings_resp = chrome_btn(ui, HOVER_STANDARD, icons.get("settings"));
+            draw_update_badge(ui, settings_resp.rect, &app.update_state);
+            if settings_resp.clicked() {
                 app.settings_open = Some(true);
             }
 

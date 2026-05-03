@@ -8,6 +8,22 @@ mod utils;
 
 fn main() -> eframe::Result {
     #[cfg(windows)]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if args.get(1).map(|s| s.as_str()) == Some(infra::updater::APPLY_UPDATE_ARG) {
+            match (args.get(2), args.get(3), args.get(4)) {
+                (Some(pid_str), Some(pending), Some(target)) => {
+                    if let Ok(pid) = pid_str.parse::<u32>() {
+                        infra::updater::run_apply_update(pid, pending, target);
+                    }
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+    }
+
+    #[cfg(windows)]
     let _singleton = infra::singleton::acquire();
 
     let app_icon = {

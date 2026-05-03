@@ -15,6 +15,7 @@ const USER_AGENT: &str = concat!("Nexa/", env!("CARGO_PKG_VERSION"));
 const CHECK_TIMEOUT_SECS: u64 = 15;
 const DOWNLOAD_TIMEOUT_SECS: u64 = 120;
 const DOWNLOAD_CHUNK: usize = 65_536;
+pub const APPLY_UPDATE_ARG: &str = "--apply-update";
 
 pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -253,43 +254,98 @@ fn download_inner(
 #[cfg(windows)]
 pub fn apply_update_and_restart(staged_path: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
+    use windows::Win32::System::Threading::GetCurrentProcessId;
 
     let current_exe =
-        std::env::current_exe().map_err(|e| format!("Cannot find current exe: {e}"))?;
+        std::env::current_exe().map_err(|e| format!("Cannot locate current exe: {e}"))?;
+
     let exe_dir = current_exe
         .parent()
         .ok_or("Current exe has no parent directory")?;
 
     let pending_path = exe_dir.join("Nexa_pending_update.exe");
-    fs::copy(staged_path, &pending_path).map_err(|e| format!("Cannot stage update: {e}"))?;
+    fs::copy(staged_path, &pending_path).map_err(|e| format!("Cannot stage update file: {e}"))?;
 
-    let bat_path = exe_dir.join("nexa_update_helper.bat");
-    let script = format!(
-        "@echo off\r\n\
-         ping 127.0.0.1 -n 3 >nul\r\n\
-         move /y \"{pending}\" \"{exe}\"\r\n\
-         if errorlevel 1 (\r\n\
-             echo Update failed: could not replace executable. >&2\r\n\
-             del \"%~f0\"\r\n\
-             exit /b 1\r\n\
-         )\r\n\
-         start \"\" \"{exe}\"\r\n\
-         del \"%~f0\"\r\n",
-        pending = pending_path.to_string_lossy(),
-        exe = current_exe.to_string_lossy(),
-    );
+    let parent_pid = unsafe { GetCurrentProcessId() };
 
-    fs::write(&bat_path, script.as_bytes())
-        .map_err(|e| format!("Cannot write helper script: {e}"))?;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
 
-    std::process::Command::new("cmd")
-        .args(["/c", bat_path.to_str().unwrap_or("")])
-        .creation_flags(0x00000008) // DETACHED_PROCESS
-        .spawn()
-        .map_err(|e| format!("Cannot spawn helper: {e}"))?;
+    let mut base_cmd = std::process::Command::new(&current_exe);
+
+    base_cmd
+        .arg(APPLY_UPDATE_ARG)
+        .arg(parent_pid.to_string())
+        .arg(&pending_path)
+        .arg(&current_exe);
+
+    let res = base_cmd
+        .creation_flags(DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB)
+        .spawn();
+
+    if let Err(e1) = res {
+        let mut fallback_cmd = std::process::Command::new(&current_exe);
+
+        fallback_cmd
+            .arg(APPLY_UPDATE_ARG)
+            .arg(parent_pid.to_string())
+            .arg(&pending_path)
+            .arg(&current_exe);
+
+        fallback_cmd
+            .creation_flags(DETACHED_PROCESS)
+            .spawn()
+            .map_err(|e2| {
+                format!("Cannot spawn updater.\nWith BREAKAWAY: {e1}\nFallback failed: {e2}")
+            })?;
+    }
 
     thread::sleep(Duration::from_millis(200));
     std::process::exit(0);
+}
+
+#[cfg(windows)]
+pub fn run_apply_update(parent_pid: u32, pending_path: &str, target_path: &str) -> ! {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE,
+    };
+
+    unsafe {
+        match OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) {
+            Ok(handle) => {
+                WaitForSingleObject(handle, INFINITE);
+                let _ = CloseHandle(handle);
+            }
+            Err(_) => {
+                thread::sleep(Duration::from_millis(500));
+            }
+        }
+    }
+
+    thread::sleep(Duration::from_millis(300));
+
+    let pending = Path::new(pending_path);
+    let target = Path::new(target_path);
+
+    for attempt in 0u64..8 {
+        if attempt > 0 {
+            thread::sleep(Duration::from_millis(250 * attempt));
+        }
+        if fs::rename(pending, target).is_ok() {
+            std::process::Command::new(target).spawn().ok();
+            std::process::exit(0);
+        }
+    }
+
+    eprintln!("[updater] failed to replace executable after 8 attempts — aborting update");
+    fs::remove_file(pending).ok();
+    std::process::exit(1);
+}
+
+#[cfg(not(windows))]
+pub fn run_apply_update(_parent_pid: u32, _pending_path: &str, _target_path: &str) -> ! {
+    std::process::exit(1);
 }
 
 #[cfg(not(windows))]
@@ -304,11 +360,9 @@ pub fn cleanup_leftover_files() {
     else {
         return;
     };
-    for name in &["Nexa_pending_update.exe", "nexa_update_helper.bat"] {
-        let p = exe_dir.join(name);
-        if p.exists() {
-            fs::remove_file(p).ok();
-        }
+    let pending = exe_dir.join("Nexa_pending_update.exe");
+    if pending.exists() {
+        fs::remove_file(pending).ok();
     }
 }
 

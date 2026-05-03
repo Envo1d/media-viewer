@@ -66,7 +66,7 @@ fn draw_downloading(
             let pct = (progress * 100.0) as u32;
             let detail = if total_bytes > 0 {
                 format!(
-                    "{}%  —  {} / {}",
+                    "{}%  -  {} / {}",
                     pct,
                     bytes_human(bytes_done),
                     bytes_human(total_bytes)

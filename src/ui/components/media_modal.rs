@@ -405,7 +405,10 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
         Some(MediaModalMode::Distribute(item)) => {
             let queue_remaining = app.distribute_queue.len();
             let title = if queue_remaining > 0 {
-                format!("Distribute to Library ({} more after this)", queue_remaining)
+                format!(
+                    "Distribute to Library ({} more after this)",
+                    queue_remaining
+                )
             } else {
                 "Distribute to Library".to_owned()
             };
@@ -446,6 +449,82 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
             .show(ui, |ui| {
                 ui.set_width(INNER_W);
                 ui.style_mut().interaction.selectable_labels = false;
+
+                if let Some(MediaModalMode::Distribute(ref staging_item)) = app.modal_state.mode {
+                    let item_path = staging_item.path.clone();
+                    let item_name = staging_item.name.clone();
+
+                    ui.label(RichText::new("FILE").size(10.5).color(C_TEXT_MUTED));
+                    ui.add_space(6.0);
+
+                    Frame::NONE
+                        .fill(SECTION_BG)
+                        .corner_radius(CornerRadius::same(8))
+                        .inner_margin(Margin::symmetric(12, 0))
+                        .stroke(Stroke::new(1.0, BORDER))
+                        .show(ui, |ui| {
+                            ui.set_min_height(42.0);
+                            ui.horizontal(|ui| {
+                                ui.set_min_height(42.0);
+
+                                let max_ch = ((INNER_W * 0.70 / (12.0 * 0.55)) as usize).max(8);
+                                let display = if item_name.chars().count() > max_ch {
+                                    format!(
+                                        "{}…",
+                                        item_name
+                                            .chars()
+                                            .take(max_ch.saturating_sub(1))
+                                            .collect::<String>()
+                                    )
+                                } else {
+                                    item_name.clone()
+                                };
+
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(display).size(12.0).color(C_TEXT),
+                                    )
+                                    .truncate(),
+                                );
+
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let (btn_rect, mut btn_resp) = ui.allocate_exact_size(
+                                            Vec2::new(78.0, 26.0),
+                                            Sense::click(),
+                                        );
+                                        if btn_resp.hovered() {
+                                            btn_resp = btn_resp
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                        }
+                                        if ui.is_rect_visible(btn_rect) {
+                                            let fill = if btn_resp.is_pointer_button_down_on() {
+                                                C_BLURPLE.linear_multiply(0.70)
+                                            } else if btn_resp.hovered() {
+                                                C_BLURPLE.linear_multiply(0.85)
+                                            } else {
+                                                C_BLURPLE.linear_multiply(0.60)
+                                            };
+                                            ui.painter().rect_filled(btn_rect, 5.0, fill);
+                                            ui.painter().text(
+                                                btn_rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                "Open File",
+                                                egui::FontId::proportional(11.5),
+                                                C_TEXT_HEADER,
+                                            );
+                                        }
+                                        if btn_resp.clicked() {
+                                            let _ = open::that(&item_path);
+                                        }
+                                    },
+                                );
+                            });
+                        });
+
+                    ui.add_space(14.0);
+                }
 
                 ui.label(RichText::new("COPYRIGHT").size(10.5).color(C_TEXT_MUTED));
                 ui.add_space(6.0);
@@ -547,10 +626,10 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
                                             egui::TextEdit::singleline(
                                                 &mut app.modal_state.video_title,
                                             )
-                                                .hint_text("Leave empty to use original filename…")
-                                                .frame(Frame::NONE)
-                                                .desired_width(f32::INFINITY)
-                                                .text_color(C_TEXT),
+                                            .hint_text("Leave empty to use original filename…")
+                                            .frame(Frame::NONE)
+                                            .desired_width(f32::INFINITY)
+                                            .text_color(C_TEXT),
                                         );
                                     });
                                 });
@@ -564,7 +643,7 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
                         egui::Label::new(
                             RichText::new(format!("⚠ {err}")).size(11.0).color(DANGER),
                         )
-                            .wrap(),
+                        .wrap(),
                     );
                     ui.add_space(10.0);
                 }

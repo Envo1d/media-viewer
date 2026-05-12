@@ -67,6 +67,13 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
     let m = compute_grid_metrics(ui.available_width(), total_items, card_sz);
     let selection_count = app.selection.len();
 
+    let detail_path = app
+        .staging_detail
+        .selected_item
+        .as_ref()
+        .map(|i| i.path.clone())
+        .unwrap_or_default();
+
     let rb_id = Id::new("staging_view_rb");
     let rb: RubberBand = ui
         .ctx()
@@ -79,8 +86,9 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
 
     let mut distribute_request: Option<Arc<StagingItem>> = None;
     let mut delete_request: Option<Arc<StagingItem>> = None;
-    let mut bulk_delete_request: bool = false;
-    let mut bulk_distribute_request: bool = false;
+    let mut select_request: Option<Arc<StagingItem>> = None;
+    let mut bulk_delete_request = false;
+    let mut bulk_distribute_request = false;
     let mut toggle_paths: Vec<String> = Vec::new();
     let mut card_rects: Vec<(usize, Rect)> = Vec::new();
 
@@ -104,7 +112,9 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
                         let Some(item) = app.staging_filtered.get(idx) else {
                             break;
                         };
+
                         let is_selected = app.selection.contains(&item.path);
+                        let is_detail_selected = item.path == detail_path;
                         let mut toggle_this = false;
                         let mut bulk_del_this = false;
                         let mut bulk_dist_this = false;
@@ -116,12 +126,14 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
                             card_sz,
                             app.show_previews,
                             is_selected,
+                            is_detail_selected,
                             selection_count,
                             &mut distribute_request,
                             &mut delete_request,
                             &mut bulk_del_this,
                             &mut bulk_dist_this,
                             &mut toggle_this,
+                            &mut select_request,
                         );
 
                         card_rects.push((idx, resp.rect));
@@ -177,7 +189,6 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
     let primary_released = ctx.input(|i| i.pointer.primary_released());
 
     let mut new_rb = rb;
-
     if !new_rb.active && primary_pressed {
         let pointer_consumed = ctx.egui_is_using_pointer();
         if let Some(pp) = pointer_pos {
@@ -192,7 +203,6 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
             }
         }
     }
-
     if new_rb.active {
         if primary_down {
             if let Some(pp) = pointer_pos {
@@ -215,9 +225,12 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
             new_rb.active = false;
         }
     }
-
     ctx.memory_mut(|mem| mem.data.insert_temp(rb_id, new_rb));
 
+    if let Some(item) = select_request {
+        app.clear_selection();
+        app.select_staging_item(item, &ctx);
+    }
     if let Some(item) = distribute_request {
         app.clear_selection();
         app.open_distribute_modal(item);
@@ -225,7 +238,6 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
     if let Some(item) = delete_request {
         app.pending_delete = Some(PendingDelete::Staging(item));
     }
-
     if bulk_delete_request {
         let selected: Vec<Arc<StagingItem>> = app
             .staging_filtered
@@ -235,7 +247,6 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
             .collect();
         app.pending_delete = Some(PendingDelete::BulkStaging(selected));
     }
-
     if bulk_distribute_request {
         let items: Vec<Arc<StagingItem>> = app
             .staging_filtered

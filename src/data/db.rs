@@ -38,6 +38,24 @@ fn split_cte(col: &str) -> String {
     )
 }
 
+fn tag_clauses(count: usize) -> String {
+    (0..count)
+        .map(|_| "AND ('|' || tags || '|') LIKE ?")
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn tag_clauses_fts(count: usize) -> String {
+    (0..count)
+        .map(|_| "AND ('|' || m.tags || '|') LIKE ?")
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn tag_like_params(tags: &[String]) -> Vec<String> {
+    tags.iter().map(|t| format!("%|{}|%", t)).collect()
+}
+
 pub struct Database {
     conn: Connection,
 }
@@ -167,12 +185,7 @@ impl Database {
         tags: &str,
     ) {
         if let Err(e) = self.conn.execute(
-            "UPDATE media
-                SET copyright  = ?2,
-                    artist     = ?3,
-                    characters = ?4,
-                    tags       = ?5
-              WHERE path = ?1",
+            "UPDATE media SET copyright=?2, artist=?3, characters=?4, tags=?5 WHERE path=?1",
             rusqlite::params![path, copyright, artist, characters, tags],
         ) {
             eprintln!("update_metadata error: {e}");
@@ -181,7 +194,7 @@ impl Database {
 
     pub fn rename_media_path(&self, old_path: &str, new_path: &str, new_name: &str) {
         if let Err(e) = self.conn.execute(
-            "UPDATE media SET path = ?2, name = ?3 WHERE path = ?1",
+            "UPDATE media SET path=?2, name=?3 WHERE path=?1",
             rusqlite::params![old_path, new_path, new_name],
         ) {
             eprintln!("rename_media_path error: {e}");
@@ -199,26 +212,24 @@ impl Database {
                 return;
             }
         };
-
-        for (orig_path, temp_path, _final_path, _final_name) in renames {
+        for (orig_path, temp_path, _fp, _fn) in renames {
             let temp_name = std::path::Path::new(temp_path)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("");
             if let Err(e) = tx.execute(
-                "UPDATE media SET path = ?2, name = ?3 WHERE path = ?1",
+                "UPDATE media SET path=?2, name=?3 WHERE path=?1",
                 rusqlite::params![orig_path, temp_path, temp_name],
             ) {
-                eprintln!("rename_group_batch phase-A error ({orig_path} → {temp_path}): {e}");
+                eprintln!("rename_group_batch phase-A error ({orig_path}→{temp_path}): {e}");
             }
         }
-
-        for (_orig_path, temp_path, final_path, final_name) in renames {
+        for (_op, temp_path, final_path, final_name) in renames {
             if let Err(e) = tx.execute(
-                "UPDATE media SET path = ?2, name = ?3 WHERE path = ?1",
+                "UPDATE media SET path=?2, name=?3 WHERE path=?1",
                 rusqlite::params![temp_path, final_path, final_name],
             ) {
-                eprintln!("rename_group_batch phase-B error ({temp_path} → {final_path}): {e}");
+                eprintln!("rename_group_batch phase-B error ({temp_path}→{final_path}): {e}");
             }
         }
 
@@ -241,8 +252,7 @@ impl Database {
             Vec::new()
         } else {
             let sql = format!(
-                "SELECT copyright, COUNT(*) FROM media \
-                 WHERE copyright IN ({}) GROUP BY copyright",
+                "SELECT copyright, COUNT(*) FROM media WHERE copyright IN ({}) GROUP BY copyright",
                 placeholders(copyrights.len())
             );
             self.conn
@@ -260,8 +270,7 @@ impl Database {
             Vec::new()
         } else {
             let sql = format!(
-                "SELECT artist, COUNT(*) FROM media \
-                 WHERE artist IN ({}) GROUP BY artist",
+                "SELECT artist, COUNT(*) FROM media WHERE artist IN ({}) GROUP BY artist",
                 placeholders(artists.len())
             );
             self.conn
@@ -281,7 +290,7 @@ impl Database {
             .filter_map(|tag| {
                 self.conn
                     .query_row(
-                        "SELECT COUNT(*) FROM media WHERE ('|' || tags || '|') LIKE ?1",
+                        "SELECT COUNT(*) FROM media WHERE ('|'||tags||'|') LIKE ?1",
                         rusqlite::params![format!("%|{}|%", tag)],
                         |r| r.get::<_, u32>(0),
                     )
@@ -319,8 +328,7 @@ impl Database {
             .unwrap_or_default();
 
         let chars_sql = format!(
-            "{cte}
-             SELECT DISTINCT trim(word) FROM split WHERE trim(word) != '' ORDER BY 1",
+            "{cte} SELECT DISTINCT trim(word) FROM split WHERE trim(word)!='' ORDER BY 1",
             cte = split_cte("characters")
         );
         let characters: Vec<String> = self
@@ -333,8 +341,7 @@ impl Database {
             .unwrap_or_default();
 
         let tags_sql = format!(
-            "{cte}
-             SELECT DISTINCT trim(word) FROM split WHERE trim(word) != '' ORDER BY 1",
+            "{cte} SELECT DISTINCT trim(word) FROM split WHERE trim(word)!='' ORDER BY 1",
             cte = split_cte("tags")
         );
         let tags: Vec<String> = self
@@ -361,16 +368,19 @@ impl Database {
         filter: &MediaFilter,
         sort: &SortOrder,
         field_filter: &Option<FieldFilter>,
+        tag_filters: &[String],
     ) -> Vec<MediaItem> {
-        let ff = field_filter
+        let ff_clause = field_filter
             .as_ref()
             .map(|f| f.to_where_sql())
             .unwrap_or("");
+        let tf_clause = tag_clauses(tag_filters.len());
         let sql = format!(
-            "SELECT {c} FROM media WHERE 1=1 {f} {ff} {s} LIMIT ? OFFSET ?",
+            "SELECT {c} FROM media WHERE 1=1 {f} {ff} {tf} {s} LIMIT ? OFFSET ?",
             c = SELECT_COLS,
             f = filter.to_sql(),
-            ff = ff,
+            ff = ff_clause,
+            tf = tf_clause,
             s = sort.to_sql(),
         );
         let mut stmt = match self.conn.prepare_cached(&sql) {
@@ -380,19 +390,40 @@ impl Database {
                 return Vec::new();
             }
         };
+        let tag_likes = tag_like_params(tag_filters);
         let (li, oi) = (limit as i64, offset as i64);
-        match field_filter {
-            None => stmt.query_map(rusqlite::params![li, oi], map_media_item),
-            Some(ff) => {
-                let v = ff.param_value();
-                stmt.query_map(rusqlite::params![v, li, oi], map_media_item)
+
+        let result = if let Some(ff) = field_filter {
+            let fv = ff.param_value();
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            params.push(Box::new(fv));
+            for t in &tag_likes {
+                params.push(Box::new(t.clone()));
             }
-        }
-        .map(|it| it.filter_map(Result::ok).collect())
-        .unwrap_or_else(|e| {
-            eprintln!("query error: {e}");
-            Vec::new()
-        })
+            params.push(Box::new(li));
+            params.push(Box::new(oi));
+            stmt.query_map(
+                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+                map_media_item,
+            )
+        } else {
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            for t in &tag_likes {
+                params.push(Box::new(t.clone()));
+            }
+            params.push(Box::new(li));
+            params.push(Box::new(oi));
+            stmt.query_map(
+                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+                map_media_item,
+            )
+        };
+        result
+            .map(|it| it.filter_map(Result::ok).collect())
+            .unwrap_or_else(|e| {
+                eprintln!("query error: {e}");
+                Vec::new()
+            })
     }
 
     pub fn search(
@@ -403,22 +434,25 @@ impl Database {
         filter: &MediaFilter,
         sort: &SortOrder,
         field_filter: &Option<FieldFilter>,
+        tag_filters: &[String],
     ) -> Vec<MediaItem> {
         let raw = build_search_query(input);
         if raw.is_empty() {
-            return self.query(limit, offset, filter, sort, field_filter);
+            return self.query(limit, offset, filter, sort, field_filter, tag_filters);
         }
         let fts_q = format!("{}: {}", FTS_COLUMN_FILTER, raw);
-        let ff = field_filter
+        let ff_clause = field_filter
             .as_ref()
             .map(|f| f.to_where_sql_fts())
             .unwrap_or("");
+        let tf_clause = tag_clauses_fts(tag_filters.len());
         let sql = format!(
             "SELECT {c} FROM media m JOIN media_fts ON m.rowid = media_fts.rowid \
-             WHERE media_fts MATCH ? {f} {ff} {s} LIMIT ? OFFSET ?",
+             WHERE media_fts MATCH ? {f} {ff} {tf} {s} LIMIT ? OFFSET ?",
             c = SELECT_COLS_FTS,
             f = filter.to_sql_fts(),
-            ff = ff,
+            ff = ff_clause,
+            tf = tf_clause,
             s = sort.to_sql_fts(),
         );
         let mut stmt = match self.conn.prepare_cached(&sql) {
@@ -428,19 +462,42 @@ impl Database {
                 return Vec::new();
             }
         };
+        let tag_likes = tag_like_params(tag_filters);
         let (li, oi) = (limit as i64, offset as i64);
-        match field_filter {
-            None => stmt.query_map(rusqlite::params![fts_q, li, oi], map_media_item),
-            Some(ff) => {
-                let v = ff.param_value();
-                stmt.query_map(rusqlite::params![fts_q, v, li, oi], map_media_item)
+
+        let result = if let Some(ff) = field_filter {
+            let fv = ff.param_value();
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            params.push(Box::new(fts_q));
+            params.push(Box::new(fv));
+            for t in &tag_likes {
+                params.push(Box::new(t.clone()));
             }
-        }
-        .map(|it| it.filter_map(Result::ok).collect())
-        .unwrap_or_else(|e| {
-            eprintln!("search error: {e}");
-            Vec::new()
-        })
+            params.push(Box::new(li));
+            params.push(Box::new(oi));
+            stmt.query_map(
+                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+                map_media_item,
+            )
+        } else {
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            params.push(Box::new(fts_q));
+            for t in &tag_likes {
+                params.push(Box::new(t.clone()));
+            }
+            params.push(Box::new(li));
+            params.push(Box::new(oi));
+            stmt.query_map(
+                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+                map_media_item,
+            )
+        };
+        result
+            .map(|it| it.filter_map(Result::ok).collect())
+            .unwrap_or_else(|e| {
+                eprintln!("search error: {e}");
+                Vec::new()
+            })
     }
 
     pub fn delete_not_seen(&self, scan_id: i64) {
@@ -455,7 +512,7 @@ impl Database {
     pub fn delete_by_path(&self, path: &str) {
         if let Err(e) = self
             .conn
-            .execute("DELETE FROM media WHERE path = ?1", rusqlite::params![path])
+            .execute("DELETE FROM media WHERE path=?1", rusqlite::params![path])
         {
             eprintln!("delete_by_path: {e}");
         }
@@ -471,7 +528,7 @@ impl Database {
         };
         {
             let mut touch = match tx.prepare_cached(
-                "UPDATE staging SET last_seen_scan = ?3 WHERE path = ?1 AND modified = ?2",
+                "UPDATE staging SET last_seen_scan=?3 WHERE path=?1 AND modified=?2",
             ) {
                 Ok(s) => s,
                 Err(e) => {
@@ -480,7 +537,7 @@ impl Database {
                 }
             };
             let mut ins = match tx.prepare_cached(
-                "INSERT OR IGNORE INTO staging (path, name, media_type, modified, last_seen_scan) VALUES (?1,?2,?3,?4,?5)",
+                "INSERT OR IGNORE INTO staging (path,name,media_type,modified,last_seen_scan) VALUES(?1,?2,?3,?4,?5)",
             ) { Ok(s) => s, Err(e) => { eprintln!("staging ins: {e}"); return; } };
             for item in items {
                 let t = touch
@@ -513,24 +570,26 @@ impl Database {
     }
 
     pub fn staging_delete_by_path(&self, path: &str) {
-        if let Err(e) = self.conn.execute(
-            "DELETE FROM staging WHERE path = ?1",
-            rusqlite::params![path],
-        ) {
+        if let Err(e) = self
+            .conn
+            .execute("DELETE FROM staging WHERE path=?1", rusqlite::params![path])
+        {
             eprintln!("staging_delete_by_path: {e}");
         }
     }
 
     pub fn staging_query(&self) -> Vec<StagingItem> {
-        let mut stmt = match self.conn.prepare_cached(
-            "SELECT path, name, media_type, modified FROM staging ORDER BY name ASC",
-        ) {
+        let mut stmt = match self
+            .conn
+            .prepare_cached("SELECT path,name,media_type,modified FROM staging ORDER BY name ASC")
+        {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("staging_query prepare: {e}");
                 return Vec::new();
             }
         };
+
         stmt.query_map([], map_staging_item)
             .map(|it| it.filter_map(Result::ok).collect())
             .unwrap_or_else(|e| {
@@ -543,19 +602,22 @@ impl Database {
         let esc = |s: &str| s.replace('|', "||").replace('%', "|%").replace('_', "|_");
 
         let plain_like = format!("{}|_.%", esc(base_stem));
+
         let suffixed_like = format!("{} - %", esc(base_stem));
 
         let sep = if dir.ends_with(['/', '\\']) {
             ""
+        } else if dir.contains('\\') {
+            "\\"
         } else {
-            if dir.contains('\\') { "\\" } else { "/" }
+            "/"
         };
+
         let dir_prefix_like = format!("{}{}%", esc(dir), sep);
 
         let sql = format!(
             "SELECT {c} FROM media \
-             WHERE path LIKE ? ESCAPE '|' \
-               AND (name LIKE ? ESCAPE '|' OR name LIKE ? ESCAPE '|') \
+             WHERE path LIKE ? ESCAPE '|' AND (name LIKE ? ESCAPE '|' OR name LIKE ? ESCAPE '|') \
              ORDER BY path ASC",
             c = SELECT_COLS,
         );

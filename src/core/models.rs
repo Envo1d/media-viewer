@@ -66,7 +66,6 @@ impl SortOrder {
 pub enum FieldFilter {
     Artist(String),
     Copyright(String),
-    Tag(String),
 }
 
 impl FieldFilter {
@@ -74,20 +73,17 @@ impl FieldFilter {
         match self {
             Self::Artist(_) => "AND artist = ?",
             Self::Copyright(_) => "AND copyright = ?",
-            Self::Tag(_) => "AND ('|' || tags || '|') LIKE ?",
         }
     }
     pub fn to_where_sql_fts(&self) -> &'static str {
         match self {
             Self::Artist(_) => "AND m.artist = ?",
             Self::Copyright(_) => "AND m.copyright = ?",
-            Self::Tag(_) => "AND ('|' || m.tags || '|') LIKE ?",
         }
     }
     pub fn param_value(&self) -> String {
         match self {
             Self::Artist(v) | Self::Copyright(v) => v.clone(),
-            Self::Tag(v) => format!("%|{}|%", v),
         }
     }
 }
@@ -126,6 +122,7 @@ impl MediaItem {
     pub fn characters_db(&self) -> String {
         self.characters.join("|")
     }
+
     pub fn tags_db(&self) -> String {
         self.tags.join("|")
     }
@@ -165,10 +162,20 @@ impl MediaType {
     }
 }
 
+// Metadata
+#[derive(Debug, Clone, Default)]
+pub struct FileDetailInfo {
+    pub file_size: u64,
+    pub dimensions: Option<(u32, u32)>,
+    pub duration_secs: Option<f64>,
+    pub frame_rate: Option<f64>,
+}
+
 // DB commands
 pub enum DbCommand {
     // Main library — writes
     UpsertBatch(Vec<Arc<MediaItem>>, i64),
+
     DeleteNotSeen(i64),
     DeleteByPath(String),
 
@@ -179,6 +186,7 @@ pub enum DbCommand {
         characters: String,
         tags: String,
     },
+
     RenameMediaPath {
         old_path: String,
         new_path: String,
@@ -204,8 +212,10 @@ pub enum DbCommand {
         filter: MediaFilter,
         sort: SortOrder,
         field_filter: Option<FieldFilter>,
+        tag_filters: Vec<String>,
         resp: Sender<(u64, Vec<Arc<MediaItem>>)>,
     },
+
     Search {
         id: u64,
         query: String,
@@ -214,8 +224,10 @@ pub enum DbCommand {
         filter: MediaFilter,
         sort: SortOrder,
         field_filter: Option<FieldFilter>,
+        tag_filters: Vec<String>,
         resp: Sender<(u64, Vec<Arc<MediaItem>>)>,
     },
+
     QueryStatsForValues {
         copyrights: Vec<String>,
         artists: Vec<String>,
@@ -245,7 +257,6 @@ pub enum ScanEvent {
     Progress(u64),
     Finished,
 }
-
 pub enum WatchEvent {
     Refresh,
 }
@@ -280,11 +291,13 @@ impl Ord for TextureTask {
         self.timestamp.cmp(&other.timestamp)
     }
 }
+
 impl PartialOrd for TextureTask {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
+
 impl PartialEq for TextureTask {
     fn eq(&self, other: &Self) -> bool {
         self.priority == other.priority
@@ -292,6 +305,7 @@ impl PartialEq for TextureTask {
             && self.path == other.path
     }
 }
+
 impl Eq for TextureTask {}
 
 // Files

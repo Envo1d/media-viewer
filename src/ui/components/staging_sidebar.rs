@@ -34,7 +34,6 @@ pub fn staging_sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
 
     let total = app.staging_items.len();
     let visible = app.staging_filtered.len();
-
     let count_text = if app.staging_search.is_empty() {
         format!("{} file{}", total, if total == 1 { "" } else { "s" })
     } else {
@@ -45,7 +44,6 @@ pub fn staging_sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
             if total == 1 { "" } else { "s" }
         )
     };
-
     ui.label(RichText::new(count_text).size(12.5).color(C_TEXT));
 
     section_heading(ui, "SCAN");
@@ -79,7 +77,12 @@ pub fn staging_sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     section_heading(ui, "SHOW PREVIEWS");
 
     let toggle_id = ui.make_persistent_id("toggle_staging_previews");
-    if toggle(ui, toggle_id, &mut app.show_previews) && !app.show_previews {
-        app.texture_manager.invalidate_prefetch();
+    let prev_show = app.show_previews;
+    if toggle(ui, toggle_id, &mut app.show_previews) && app.show_previews != prev_show {
+        if !app.show_previews {
+            app.texture_manager.invalidate_prefetch();
+        }
+        let ctx = ui.ctx().clone();
+        app.on_show_previews_changed(&ctx);
     }
 }

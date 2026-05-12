@@ -421,6 +421,10 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
         action = ModalAction::Close;
     }
 
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        action = ModalAction::Close;
+    }
+
     let close_icon = icons.get("close").clone();
 
     modal_frame_window("##media_modal", MODAL_W, None).show(ctx, |ui| {

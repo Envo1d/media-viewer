@@ -1,5 +1,6 @@
 pub mod card_primitives;
 pub mod delete_confirm_modal;
+pub mod detail_panel;
 pub mod grid_view;
 pub mod media_card;
 pub mod media_modal;

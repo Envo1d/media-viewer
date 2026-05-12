@@ -23,6 +23,7 @@ fn hover_meta(item: &MediaItem) -> String {
     format!("{} · {}", item.copyright, item.artist)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn media_card(
     ui: &mut Ui,
     item: &Arc<MediaItem>,
@@ -31,12 +32,14 @@ pub fn media_card(
     show_texture: bool,
     in_group: bool,
     is_selected: bool,
+    is_detail_selected: bool,
     selection_count: usize,
     edit_target: &mut Option<Arc<MediaItem>>,
     delete_request: &mut Option<Arc<MediaItem>>,
     reorder_request: &mut Option<Arc<MediaItem>>,
     bulk_delete_request: &mut bool,
     toggle_select: &mut bool,
+    select_request: &mut Option<Arc<MediaItem>>,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
 
@@ -132,11 +135,13 @@ pub fn media_card(
         ui.add_space(2.0);
     });
 
-    if response.clicked() {
+    if response.double_clicked() {
+        let _ = open::that(&item.path);
+    } else if response.clicked() {
         if ui.input(|i| i.modifiers.ctrl) {
             *toggle_select = true;
         } else {
-            let _ = open::that(&item.path);
+            *select_request = Some(Arc::clone(item));
         }
     }
 
@@ -147,7 +152,12 @@ pub fn media_card(
     let is_hovered = response.hovered();
     let inner = ui.painter().with_clip_rect(rect);
 
-    inner.rect_filled(rect, CARD_CR, CARD_BG);
+    let card_bg = if is_detail_selected && !is_selected {
+        CARD_BG.linear_multiply(1.18)
+    } else {
+        CARD_BG
+    };
+    inner.rect_filled(rect, CARD_CR, card_bg);
 
     let img_area = Rect::from_min_size(rect.min, Vec2::new(size, size - INFO_H));
 
@@ -164,18 +174,20 @@ pub fn media_card(
 
     if is_selected {
         draw_selection_tint(&inner, img_area);
-    } else if is_hovered {
+    } else if is_hovered || is_detail_selected {
         draw_hover_tint(&inner, img_area);
-        let meta = hover_meta(item);
-        let meta_sz = (size * 0.051).clamp(9.0, 11.5);
-        let max_ch = ((size * 0.80 / (meta_sz * 0.55)) as usize).max(6);
-        draw_hover_label(
-            &inner,
-            rect,
-            img_area,
-            truncate(&meta, max_ch).as_ref(),
-            size,
-        );
+        if is_hovered {
+            let meta = hover_meta(item);
+            let meta_sz = (size * 0.051).clamp(9.0, 11.5);
+            let max_ch = ((size * 0.80 / (meta_sz * 0.55)) as usize).max(6);
+            draw_hover_label(
+                &inner,
+                rect,
+                img_area,
+                truncate(&meta, max_ch).as_ref(),
+                size,
+            );
+        }
     }
 
     if is_hovered {
@@ -183,7 +195,7 @@ pub fn media_card(
     }
 
     draw_info_bar(&inner, rect, &item.name, size);
-    draw_card_border(&inner, rect, is_hovered, is_selected);
+    draw_card_border(&inner, rect, is_hovered, is_selected || is_detail_selected);
 
     response
 }

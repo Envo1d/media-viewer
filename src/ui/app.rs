@@ -12,14 +12,18 @@ use crate::infra::updater::{
     UpdateWorker,
 };
 use crate::infra::window_effects::WindowEffects;
-use crate::ui::colors::C_PRIMARY_BG;
+use crate::ui::colors::{BORDER, C_PRIMARY_BG, C_SECONDARY_BG};
 use crate::ui::components;
+use crate::ui::components::detail_panel::{
+    detail_panel, load_file_detail, load_preview_image, DETAIL_PANEL_W,
+};
 use crate::ui::components::media_modal::{media_modal, MediaModalState};
 use crate::ui::components::reorder_modal::{do_apply_reorder, reorder_modal, ReorderState};
 use crate::ui::components::sidebar::sidebar;
 use crate::ui::components::staging_sidebar::staging_sidebar;
 use crate::ui::components::staging_view::staging_view;
 use crate::ui::components::update_badge::update_toast;
+use crate::ui::detail_state::{LibraryDetailState, StagingDetailState};
 use crate::ui::fonts::setup_fonts;
 use crate::ui::icon_registry::IconRegistry;
 use crate::ui::scan_manager::ScanManager;
@@ -28,9 +32,9 @@ use crate::ui::texture_manager::TextureManager;
 use crate::utils::file_helpers::{move_file, natural_cmp, parse_suffix_number, resolve_conflict};
 use crossbeam_channel::Receiver;
 use eframe::Frame;
-use egui::{Context, Margin, TextureHandle, Ui};
+use egui::{ColorImage, Context, Margin, Stroke, TextureHandle, Ui};
 use egui_extras::image::load_image_bytes;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -61,6 +65,7 @@ pub struct MediaApp {
     pub card_size: f32,
     pub show_previews: bool,
     pub field_filter: Option<FieldFilter>,
+    pub active_tags: HashSet<String>,
 
     // Data – main library
     pub scan_manager: ScanManager,
@@ -71,7 +76,7 @@ pub struct MediaApp {
     pub sidebar_stats: LibraryStats,
     stats_rx: Option<Receiver<LibraryStats>>,
 
-    // Autocomplete data for the distribute modal
+    // Autocomplete
     pub autocomplete: AutocompleteData,
     autocomplete_rx: Option<Receiver<AutocompleteData>>,
     autocomplete_dirty: bool,
@@ -109,17 +114,22 @@ pub struct MediaApp {
     // Windows rounded-window helpers
     pub window_fx: WindowEffects,
 
-    // Reorder modal state (None when closed)
+    // Reorder modal state
     pub reorder_state: Option<ReorderState>,
 
     // Multi-selection
-    pub selection: std::collections::HashSet<String>,
+    pub selection: HashSet<String>,
     pub selection_anchor: Option<String>,
     pub distribute_queue: Vec<Arc<StagingItem>>,
 
     // Auto-update
     pub update_worker: UpdateWorker,
     pub update_state: UpdateState,
+
+    /// Library view detail state
+    pub library_detail: LibraryDetailState,
+    /// Staging view detail state
+    pub staging_detail: StagingDetailState,
 }
 
 impl MediaApp {
@@ -198,6 +208,7 @@ impl MediaApp {
             card_size: 200.0,
             app_icon,
             field_filter: None,
+            active_tags: HashSet::new(),
             sidebar_stats: LibraryStats::default(),
             stats_rx: None,
             autocomplete: AutocompleteData::default(),
@@ -225,11 +236,13 @@ impl MediaApp {
             staging_filtered: Vec::new(),
             staging_last_search: String::new(),
             reorder_state: None,
-            selection: std::collections::HashSet::new(),
+            selection: HashSet::new(),
             selection_anchor: None,
             distribute_queue: Vec::new(),
             update_worker,
             update_state: UpdateState::Idle,
+            library_detail: LibraryDetailState::new(),
+            staging_detail: StagingDetailState::new(),
         };
 
         app.refresh_items();
@@ -256,85 +269,187 @@ impl MediaApp {
         app
     }
 
-    pub fn poll_updater(&mut self, ctx: &Context) {
-        let events = self.update_worker.poll();
-        if events.is_empty() {
+    fn spawn_loaders(
+        path: &str,
+        media_type: &MediaType,
+        show_previews: bool,
+        preview_rx_out: &mut Option<crossbeam_channel::Receiver<Option<image::RgbaImage>>>,
+        info_rx_out: &mut Option<crossbeam_channel::Receiver<crate::core::models::FileDetailInfo>>,
+        ctx: &egui::Context,
+    ) {
+        if show_previews {
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            *preview_rx_out = Some(rx);
+            let p = path.to_owned();
+            std::thread::Builder::new()
+                .name("nexa-detail-preview".into())
+                .spawn(move || {
+                    let _ = tx.send(load_preview_image(&p));
+                })
+                .ok();
+        }
+
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        *info_rx_out = Some(rx);
+        let p = path.to_owned();
+        let mt = media_type.clone();
+        std::thread::Builder::new()
+            .name("nexa-detail-info".into())
+            .spawn(move || {
+                let _ = tx.send(load_file_detail(&p, &mt));
+            })
+            .ok();
+
+        ctx.request_repaint();
+    }
+
+    pub fn select_item(&mut self, item: Arc<MediaItem>, ctx: &egui::Context) {
+        if self.library_detail.is_selected(&item.path) {
             return;
         }
-        for event in events {
-            match event {
-                UpdateEvent::StateChanged(state) => {
-                    self.update_state = state;
+
+        self.library_detail.reset_async();
+        let path = item.path.clone();
+        let mt = item.media_type.clone();
+        self.library_detail.selected_item = Some(item);
+        self.library_detail.selected_path = path.clone();
+
+        Self::spawn_loaders(
+            &path,
+            &mt,
+            self.show_previews,
+            &mut self.library_detail.preview_rx,
+            &mut self.library_detail.info_rx,
+            ctx,
+        );
+    }
+
+    pub fn select_staging_item(&mut self, item: Arc<StagingItem>, ctx: &egui::Context) {
+        if self.staging_detail.is_selected(&item.path) {
+            return;
+        }
+
+        self.staging_detail.reset_async();
+        let path = item.path.clone();
+        let mt = item.media_type.clone();
+        self.staging_detail.selected_item = Some(item);
+        self.staging_detail.selected_path = path.clone();
+
+        Self::spawn_loaders(
+            &path,
+            &mt,
+            self.show_previews,
+            &mut self.staging_detail.preview_rx,
+            &mut self.staging_detail.info_rx,
+            ctx,
+        );
+    }
+
+    pub fn on_show_previews_changed(&mut self, ctx: &egui::Context) {
+        if !self.show_previews {
+            self.library_detail.preview_texture = None;
+            self.library_detail.preview_rx = None;
+            self.staging_detail.preview_texture = None;
+            self.staging_detail.preview_rx = None;
+        } else {
+            if let Some(item) = self.library_detail.selected_item.clone() {
+                let (tx, rx) = crossbeam_channel::bounded(1);
+                self.library_detail.preview_rx = Some(rx);
+                let p = item.path.clone();
+                std::thread::Builder::new()
+                    .name("nexa-detail-preview".into())
+                    .spawn(move || {
+                        let _ = tx.send(load_preview_image(&p));
+                    })
+                    .ok();
+            }
+            if let Some(item) = self.staging_detail.selected_item.clone() {
+                let (tx, rx) = crossbeam_channel::bounded(1);
+                self.staging_detail.preview_rx = Some(rx);
+                let p = item.path.clone();
+                std::thread::Builder::new()
+                    .name("nexa-detail-preview".into())
+                    .spawn(move || {
+                        let _ = tx.send(load_preview_image(&p));
+                    })
+                    .ok();
+            }
+            ctx.request_repaint();
+        }
+    }
+
+    fn poll_detail(&mut self, ctx: &Context) {
+        if let Some(ref rx) = self.library_detail.preview_rx {
+            let guard = self.library_detail.selected_path.clone();
+            match rx.try_recv() {
+                Ok(Some(img)) if self.library_detail.selected_path == guard => {
+                    let size = [img.width() as usize, img.height() as usize];
+                    self.library_detail.preview_texture = Some(ctx.load_texture(
+                        "lib_detail_preview",
+                        ColorImage::from_rgba_unmultiplied(size, img.as_raw()),
+                        Default::default(),
+                    ));
                     ctx.request_repaint();
+                    self.library_detail.preview_rx = None;
                 }
-                UpdateEvent::DownloadProgress {
-                    bytes_done: ev_bytes_done,
-                    total_bytes: ev_total_bytes,
-                    progress: ev_progress,
-                } => {
-                    if let UpdateState::Downloading {
-                        ref mut progress,
-                        bytes_done: ref mut bd,
-                        total_bytes: ref mut tb,
-                        ..
-                    } = self.update_state
-                    {
-                        *progress = ev_progress;
-                        *bd = ev_bytes_done;
-                        *tb = ev_total_bytes;
-                    } else if let UpdateState::Available { ref version, .. } =
-                        self.update_state.clone()
-                    {
-                        self.update_state = UpdateState::Downloading {
-                            version: version.clone(),
-                            progress: ev_progress,
-                            bytes_done: ev_bytes_done,
-                            total_bytes: ev_total_bytes,
-                        };
-                    }
-                    ctx.request_repaint();
+                Ok(_) => {
+                    self.library_detail.preview_rx = None;
                 }
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    self.library_detail.preview_rx = None;
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
             }
         }
-    }
 
-    pub fn start_update_check(&mut self) {
-        self.update_state = UpdateState::Checking;
-        self.update_worker.check();
-    }
-
-    pub fn start_update_download(&mut self) {
-        if let UpdateState::Available {
-            ref version,
-            ref download_url,
-            size_bytes,
-        } = self.update_state.clone()
-        {
-            let version = version.clone();
-            let url = download_url.clone();
-            self.update_state = UpdateState::Downloading {
-                version: version.clone(),
-                progress: 0.0,
-                bytes_done: 0,
-                total_bytes: size_bytes,
-            };
-            self.update_worker
-                .download(version, url, update_staging_dir());
+        if let Some(ref rx) = self.library_detail.info_rx {
+            match rx.try_recv() {
+                Ok(info) => {
+                    self.library_detail.info = Some(info);
+                    self.library_detail.info_rx = None;
+                    ctx.request_repaint();
+                }
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    self.library_detail.info_rx = None;
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
+            }
         }
-    }
 
-    pub fn cancel_update_download(&mut self) {
-        self.update_worker.cancel_download();
-        self.update_state = UpdateState::Idle;
-    }
+        if let Some(ref rx) = self.staging_detail.preview_rx {
+            let guard = self.staging_detail.selected_path.clone();
+            match rx.try_recv() {
+                Ok(Some(img)) if self.staging_detail.selected_path == guard => {
+                    let size = [img.width() as usize, img.height() as usize];
+                    self.staging_detail.preview_texture = Some(ctx.load_texture(
+                        "stg_detail_preview",
+                        ColorImage::from_rgba_unmultiplied(size, img.as_raw()),
+                        Default::default(),
+                    ));
+                    ctx.request_repaint();
+                    self.staging_detail.preview_rx = None;
+                }
+                Ok(_) => {
+                    self.staging_detail.preview_rx = None;
+                }
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    self.staging_detail.preview_rx = None;
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
+            }
+        }
 
-    pub fn apply_update(&mut self) {
-        if let UpdateState::ReadyToInstall {
-            ref staged_path, ..
-        } = self.update_state.clone()
-        {
-            if let Err(e) = apply_update_and_restart(staged_path) {
-                self.update_state = UpdateState::Error(e);
+        if let Some(ref rx) = self.staging_detail.info_rx {
+            match rx.try_recv() {
+                Ok(info) => {
+                    self.staging_detail.info = Some(info);
+                    self.staging_detail.info_rx = None;
+                    ctx.request_repaint();
+                }
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    self.staging_detail.info_rx = None;
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
             }
         }
     }
@@ -347,6 +462,22 @@ impl MediaApp {
         }
         self.texture_manager.invalidate_prefetch();
         self.refresh_items();
+    }
+
+    pub fn toggle_tag(&mut self, tag: String) {
+        if self.active_tags.contains(&tag) {
+            self.active_tags.remove(&tag);
+        } else {
+            self.active_tags.insert(tag);
+        }
+        self.texture_manager.invalidate_prefetch();
+        self.refresh_items();
+    }
+
+    fn tag_filters_vec(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.active_tags.iter().cloned().collect();
+        v.sort();
+        v
     }
 
     pub fn open_edit_modal(&mut self, item: Arc<MediaItem>) {
@@ -466,9 +597,7 @@ impl MediaApp {
             (old_path.clone(), name)
         };
 
-        let path_changed = final_path != old_path;
-
-        if path_changed {
+        if final_path != old_path {
             DbService::rename_media_path(old_path.clone(), final_path.clone(), final_name.clone());
         }
 
@@ -520,16 +649,22 @@ impl MediaApp {
                     arc.modified
                 };
 
-                *arc = Arc::new(MediaItem {
-                    path: new_path,
-                    name: new_name,
-                    media_type,
-                    copyright,
-                    artist,
-                    characters,
-                    tags,
+                let updated = Arc::new(crate::core::models::MediaItem {
+                    path: new_path.clone(),
+                    name: new_name.clone(),
+                    media_type: media_type.clone(),
+                    copyright: copyright.clone(),
+                    artist: artist.clone(),
+                    characters: characters.clone(),
+                    tags: tags.clone(),
                     modified,
                 });
+
+                if self.library_detail.is_selected(old_path) {
+                    self.library_detail.selected_item = Some(Arc::clone(&updated));
+                    self.library_detail.selected_path = new_path.clone();
+                }
+                *arc = updated;
                 return;
             }
         }
@@ -567,11 +702,9 @@ impl MediaApp {
             self.sidebar_stats = LibraryStats::default();
             return;
         }
-
-        let mut copyrights: Vec<String> = Vec::new();
-        let mut artists: Vec<String> = Vec::new();
-        let mut tags: Vec<String> = Vec::new();
-
+        let mut copyrights = Vec::new();
+        let mut artists = Vec::new();
+        let mut tags = Vec::new();
         for item in &self.displayed_items[..n] {
             if !item.copyright.is_empty() && !copyrights.contains(&item.copyright) {
                 copyrights.push(item.copyright.clone());
@@ -666,9 +799,9 @@ impl MediaApp {
             return;
         }
         let ff = self.field_filter.clone();
-
+        let tf = self.tag_filters_vec();
         let (id, rx) = if self.search_input.trim().is_empty() {
-            DbService::query(PAGE_SIZE, 0, self.filter.clone(), self.sort.clone(), ff)
+            DbService::query(PAGE_SIZE, 0, self.filter.clone(), self.sort.clone(), ff, tf)
         } else {
             DbService::search(
                 self.search_input.clone(),
@@ -677,6 +810,7 @@ impl MediaApp {
                 self.filter.clone(),
                 self.sort.clone(),
                 ff,
+                tf,
             )
         };
 
@@ -708,24 +842,27 @@ impl MediaApp {
     pub fn refresh_items(&mut self) {
         self.is_loading_more = false;
         self.clear_selection();
+        self.library_detail.selected_item = None;
+        self.library_detail.reset_async();
         self.send_query();
+    }
+
+    pub fn refresh_staging_items(&mut self) {
+        self.staging_rx = Some(DbService::staging_query());
     }
 
     pub fn load_next_page(&mut self) {
         if !self.has_more || self.is_loading_more {
             return;
         }
-
         if self.displayed_items.len() >= MAX_DISPLAYED_ITEMS {
             return;
         }
-
         self.is_loading_more = true;
-
         let offset = self.page * PAGE_SIZE;
         let snapshot = self.current_query_id;
         let ff = self.field_filter.clone();
-
+        let tf = self.tag_filters_vec();
         let (db_id, rx) = if self.search_input.trim().is_empty() {
             DbService::query(
                 PAGE_SIZE,
@@ -733,6 +870,7 @@ impl MediaApp {
                 self.filter.clone(),
                 self.sort.clone(),
                 ff,
+                tf,
             )
         } else {
             DbService::search(
@@ -742,9 +880,9 @@ impl MediaApp {
                 self.filter.clone(),
                 self.sort.clone(),
                 ff,
+                tf,
             )
         };
-
         self.pending_queries.push((snapshot, db_id, rx));
     }
 
@@ -752,50 +890,45 @@ impl MediaApp {
         let mut need_repaint = false;
         let current = self.current_query_id;
         let mut i = 0;
-
         while i < self.pending_queries.len() {
             let (snapshot_id, db_id, ref rx) = self.pending_queries[i];
-
             if snapshot_id != current {
                 self.pending_queries.swap_remove(i);
                 self.is_loading_more = false;
                 continue;
             }
-
             let remove = match rx.try_recv() {
                 Ok((resp_id, items)) => {
                     if resp_id == db_id {
                         let is_first_page = self.displayed_items.is_empty();
-
                         if items.len() < PAGE_SIZE {
                             self.has_more = false;
                         } else {
                             self.page += 1;
                         }
-
                         self.displayed_items.extend(items);
-
                         match self.sort {
-                            SortOrder::NameAsc => {
-                                self.displayed_items
-                                    .sort_unstable_by(|a, b| natural_cmp(&a.name, &b.name));
-                            }
-                            SortOrder::NameDesc => {
-                                self.displayed_items
-                                    .sort_unstable_by(|a, b| natural_cmp(&b.name, &a.name));
-                            }
+                            SortOrder::NameAsc => self
+                                .displayed_items
+                                .sort_unstable_by(|a, b| natural_cmp(&a.name, &b.name)),
+                            SortOrder::NameDesc => self
+                                .displayed_items
+                                .sort_unstable_by(|a, b| natural_cmp(&b.name, &a.name)),
                             _ => {}
                         }
-
                         self.displayed_index.clear();
                         for (idx, item) in self.displayed_items.iter().enumerate() {
                             self.displayed_index.insert(item.path.clone(), idx);
                         }
-
                         if is_first_page {
                             self.request_stats_from_items();
+                            if !self.displayed_items.is_empty()
+                                && self.library_detail.selected_item.is_none()
+                            {
+                                let first = Arc::clone(&self.displayed_items[0]);
+                                self.select_item(first, ctx);
+                            }
                         }
-
                         need_repaint = true;
                     }
                     self.is_loading_more = false;
@@ -807,14 +940,12 @@ impl MediaApp {
                     true
                 }
             };
-
             if remove {
                 self.pending_queries.swap_remove(i);
             } else {
                 i += 1;
             }
         }
-
         if need_repaint {
             ctx.request_repaint();
         }
@@ -843,10 +974,6 @@ impl MediaApp {
         }
     }
 
-    pub fn refresh_staging_items(&mut self) {
-        self.staging_rx = Some(DbService::staging_query());
-    }
-
     fn poll_staging(&mut self, ctx: &Context) {
         let Some(ref rx) = self.staging_rx else {
             return;
@@ -856,6 +983,11 @@ impl MediaApp {
                 self.staging_items = items;
                 self.rebuild_staging_filtered();
                 self.staging_rx = None;
+                if self.staging_detail.selected_item.is_none() && !self.staging_filtered.is_empty()
+                {
+                    let first = Arc::clone(&self.staging_filtered[0]);
+                    self.select_staging_item(first, ctx);
+                }
                 ctx.request_repaint();
             }
             Err(crossbeam_channel::TryRecvError::Disconnected) => {
@@ -866,48 +998,43 @@ impl MediaApp {
     }
 
     pub fn do_delete_library(&mut self, item: Arc<MediaItem>) {
-        let deleted_path = PathBuf::from(&item.path);
-
+        if self.library_detail.is_selected(&item.path) {
+            self.library_detail.selected_item = None;
+            self.library_detail.reset_async();
+        }
         if let Err(e) = delete(&item.path) {
-            eprintln!("[delete] failed to move to trash {}: {e}", item.path);
+            eprintln!("[delete] failed to trash {}: {e}", item.path);
             return;
         }
-
         DbService::delete_by_path(item.path.clone());
         self.displayed_items.retain(|i| i.path != item.path);
-
-        let renames = crate::utils::file_helpers::reindex_after_delete(&deleted_path);
-
-        for (old_path, new_path, new_name) in renames {
-            DbService::rename_media_path(old_path.clone(), new_path.clone(), new_name.clone());
-
+        let dp = PathBuf::from(&item.path);
+        for (old, new, name) in crate::utils::file_helpers::reindex_after_delete(&dp) {
+            DbService::rename_media_path(old.clone(), new.clone(), name.clone());
             for arc in &mut self.displayed_items {
-                if arc.path == old_path {
-                    *arc = Arc::new(MediaItem {
-                        path: new_path.clone(),
-                        name: new_name.clone(),
-                        media_type: arc.media_type.clone(),
-                        copyright: arc.copyright.clone(),
-                        artist: arc.artist.clone(),
-                        characters: arc.characters.clone(),
-                        tags: arc.tags.clone(),
-                        modified: arc.modified,
+                if arc.path == old {
+                    *arc = Arc::new(crate::core::models::MediaItem {
+                        path: new.clone(),
+                        name: name.clone(),
+                        ..(**arc).clone()
                     });
                     break;
                 }
             }
         }
-
         self.rebuild_display_index();
         self.request_stats_from_items();
     }
 
     pub fn do_delete_staging(&mut self, item: Arc<StagingItem>) {
+        if self.staging_detail.is_selected(&item.path) {
+            self.staging_detail.selected_item = None;
+            self.staging_detail.reset_async();
+        }
         if let Err(e) = delete(&item.path) {
-            eprintln!("[delete] failed to move to trash {}: {e}", item.path);
+            eprintln!("[delete] failed to trash {}: {e}", item.path);
             return;
         }
-
         DbService::staging_delete_by_path(item.path.clone());
         self.staging_items.retain(|i| i.path != item.path);
         self.rebuild_staging_filtered();
@@ -926,8 +1053,14 @@ impl MediaApp {
     }
 
     pub fn do_delete_bulk_library(&mut self, items: Vec<Arc<MediaItem>>) {
+        if let Some(ref sel) = self.library_detail.selected_item.clone() {
+            if items.iter().any(|i| i.path == sel.path) {
+                self.library_detail.selected_item = None;
+                self.library_detail.reset_async();
+            }
+        }
         for item in items {
-            let deleted_path = PathBuf::from(&item.path);
+            let dp = PathBuf::from(&item.path);
             if let Err(e) = delete(&item.path) {
                 eprintln!("[bulk-delete] failed to trash {}: {e}", item.path);
                 continue;
@@ -935,15 +1068,13 @@ impl MediaApp {
             DbService::delete_by_path(item.path.clone());
             self.displayed_items.retain(|i| i.path != item.path);
             self.selection.remove(&item.path);
-
-            let renames = crate::utils::file_helpers::reindex_after_delete(&deleted_path);
-            for (old_path, new_path, new_name) in renames {
-                DbService::rename_media_path(old_path.clone(), new_path.clone(), new_name.clone());
+            for (old, new, name) in crate::utils::file_helpers::reindex_after_delete(&dp) {
+                DbService::rename_media_path(old.clone(), new.clone(), name.clone());
                 for arc in &mut self.displayed_items {
-                    if arc.path == old_path {
-                        *arc = Arc::new(MediaItem {
-                            path: new_path.clone(),
-                            name: new_name.clone(),
+                    if arc.path == old {
+                        *arc = Arc::new(crate::core::models::MediaItem {
+                            path: new.clone(),
+                            name: name.clone(),
                             ..(**arc).clone()
                         });
                         break;
@@ -957,6 +1088,12 @@ impl MediaApp {
     }
 
     pub fn do_delete_bulk_staging(&mut self, items: Vec<Arc<StagingItem>>) {
+        if let Some(ref sel) = self.staging_detail.selected_item.clone() {
+            if items.iter().any(|i| i.path == sel.path) {
+                self.staging_detail.selected_item = None;
+                self.staging_detail.reset_async();
+            }
+        }
         for item in items {
             if let Err(e) = delete(&item.path) {
                 eprintln!("[bulk-delete] failed to trash {}: {e}", item.path);
@@ -1005,33 +1142,27 @@ impl MediaApp {
             Some(MediaModalMode::Distribute(item)) => Arc::clone(item),
             _ => return,
         };
-
         let copyright = self.modal_state.copyright.trim().to_owned();
         let artist = self.modal_state.artist.trim().to_owned();
         let characters = self.modal_state.characters.clone();
         let tags = self.modal_state.tags.clone();
         let video_title = self.modal_state.video_title.trim().to_owned();
-
         let Some(library_path) = self.config.library_path.clone() else {
             self.modal_state.error = Some("Library path is not configured.".into());
             return;
         };
-
         let dest_dir =
             self.canonical_dir(&library_path, &copyright, &artist, &staging_item.media_type);
-
         if let Err(e) = fs::create_dir_all(&dest_dir) {
             self.modal_state.error = Some(format!("Could not create destination folder: {e}"));
             return;
         }
-
         let src_path = Path::new(&staging_item.path);
         let ext = src_path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
-
         let stem = {
             use crate::utils::file_helpers::build_filename_stem;
             build_filename_stem(
@@ -1043,7 +1174,6 @@ impl MediaApp {
                 &self.config.character_separator,
             )
         };
-
         let dest_filename = match resolve_conflict(&dest_dir, &stem, &ext) {
             ResolvedName::Free(name) => name,
             ResolvedName::RenameExisting {
@@ -1066,13 +1196,11 @@ impl MediaApp {
             }
             ResolvedName::NextSuffix(name) => name,
         };
-
         let dest_path = dest_dir.join(&dest_filename);
         if let Err(e) = move_file(src_path, &dest_path) {
             self.modal_state.error = Some(format!("File move failed: {e}"));
             return;
         }
-
         let dest_path_str = dest_path.to_string_lossy().to_string();
         let modified = fs::metadata(&dest_path)
             .ok()
@@ -1080,8 +1208,7 @@ impl MediaApp {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-
-        let new_item = Arc::new(MediaItem {
+        let new_item = Arc::new(crate::core::models::MediaItem {
             path: dest_path_str,
             name: dest_filename,
             media_type: staging_item.media_type.clone(),
@@ -1092,32 +1219,114 @@ impl MediaApp {
             modified,
         });
 
+        if self.staging_detail.is_selected(&staging_item.path) {
+            self.staging_detail.selected_item = None;
+            self.staging_detail.reset_async();
+        }
         DbService::insert_distributed(Arc::clone(&new_item));
         DbService::staging_delete_by_path(staging_item.path.clone());
-
         self.staging_items.retain(|i| i.path != staging_item.path);
         self.rebuild_staging_filtered();
-
         self.request_autocomplete();
         self.request_stats_from_items();
-
         if !self.distribute_queue.is_empty() {
             let next_item = self.distribute_queue.remove(0);
-
-            let saved_copyright = self.modal_state.copyright.clone();
-            let saved_artist = self.modal_state.artist.clone();
-            let saved_characters = self.modal_state.characters.clone();
-            let saved_tags = self.modal_state.tags.clone();
-
+            let saved = (
+                self.modal_state.copyright.clone(),
+                self.modal_state.artist.clone(),
+                self.modal_state.characters.clone(),
+                self.modal_state.tags.clone(),
+            );
             self.modal_state
                 .open_distribute(next_item, &self.autocomplete);
-
-            self.modal_state.copyright = saved_copyright;
-            self.modal_state.artist = saved_artist;
-            self.modal_state.characters = saved_characters;
-            self.modal_state.tags = saved_tags;
+            (
+                self.modal_state.copyright,
+                self.modal_state.artist,
+                self.modal_state.characters,
+                self.modal_state.tags,
+            ) = saved;
         } else {
             self.modal_state.close();
+        }
+    }
+
+    pub fn poll_updater(&mut self, ctx: &Context) {
+        let events = self.update_worker.poll();
+        if events.is_empty() {
+            return;
+        }
+        for event in events {
+            match event {
+                UpdateEvent::StateChanged(state) => {
+                    self.update_state = state;
+                    ctx.request_repaint();
+                }
+                UpdateEvent::DownloadProgress {
+                    bytes_done: ev_bd,
+                    total_bytes: ev_tb,
+                    progress: ev_p,
+                } => {
+                    if let UpdateState::Downloading {
+                        ref mut progress,
+                        bytes_done: ref mut bd,
+                        total_bytes: ref mut tb,
+                        ..
+                    } = self.update_state
+                    {
+                        *progress = ev_p;
+                        *bd = ev_bd;
+                        *tb = ev_tb;
+                    } else if let UpdateState::Available { ref version, .. } =
+                        self.update_state.clone()
+                    {
+                        self.update_state = UpdateState::Downloading {
+                            version: version.clone(),
+                            progress: ev_p,
+                            bytes_done: ev_bd,
+                            total_bytes: ev_tb,
+                        };
+                    }
+                    ctx.request_repaint();
+                }
+            }
+        }
+    }
+
+    pub fn start_update_check(&mut self) {
+        self.update_state = UpdateState::Checking;
+        self.update_worker.check();
+    }
+    pub fn start_update_download(&mut self) {
+        if let UpdateState::Available {
+            ref version,
+            ref download_url,
+            size_bytes,
+        } = self.update_state.clone()
+        {
+            let version = version.clone();
+            let url = download_url.clone();
+            self.update_state = UpdateState::Downloading {
+                version: version.clone(),
+                progress: 0.0,
+                bytes_done: 0,
+                total_bytes: size_bytes,
+            };
+            self.update_worker
+                .download(version, url, update_staging_dir());
+        }
+    }
+    pub fn cancel_update_download(&mut self) {
+        self.update_worker.cancel_download();
+        self.update_state = UpdateState::Idle;
+    }
+    pub fn apply_update(&mut self) {
+        if let UpdateState::ReadyToInstall {
+            ref staged_path, ..
+        } = self.update_state.clone()
+        {
+            if let Err(e) = apply_update_and_restart(staged_path) {
+                self.update_state = UpdateState::Error(e);
+            }
         }
     }
 }
@@ -1125,7 +1334,6 @@ impl MediaApp {
 impl eframe::App for MediaApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
         self.window_fx.apply();
-
         let ctx = ui.ctx().clone();
 
         self.poll_db(&ctx);
@@ -1133,6 +1341,7 @@ impl eframe::App for MediaApp {
         self.poll_autocomplete(&ctx);
         self.poll_staging(&ctx);
         self.poll_updater(&ctx);
+        self.poll_detail(&ctx);
         self.handle_search_input(&ctx);
         self.maybe_flush_autocomplete();
         self.texture_manager.update(&ctx);
@@ -1166,8 +1375,28 @@ impl eframe::App for MediaApp {
                         ViewMode::Staging => staging_sidebar(self, ui),
                     });
 
-                components::settings_modal(self, ui);
+                egui::Panel::right("detail_panel_right")
+                    .exact_size(DETAIL_PANEL_W)
+                    .resizable(false)
+                    .frame(
+                        egui::Frame::NONE
+                            .fill(C_SECONDARY_BG)
+                            .inner_margin(Margin::same(0)),
+                    )
+                    .show_inside(ui, |ui| {
+                        let sep_x = ui.min_rect().min.x;
+                        let (sep_top, sep_bot) = (ui.min_rect().min.y, ui.min_rect().max.y);
+                        ui.painter().line_segment(
+                            [
+                                egui::Pos2::new(sep_x, sep_top),
+                                egui::Pos2::new(sep_x, sep_bot),
+                            ],
+                            Stroke::new(1.0, BORDER),
+                        );
+                        detail_panel(self, ui);
+                    });
 
+                components::settings_modal(self, ui);
                 {
                     let action = media_modal(self, ui);
                     match action {
@@ -1180,9 +1409,7 @@ impl eframe::App for MediaApp {
                         ModalAction::None => {}
                     }
                 }
-
                 components::delete_confirm_modal(self, ui);
-
                 {
                     let ro_action = reorder_modal(self, ui);
                     match ro_action {
@@ -1191,7 +1418,6 @@ impl eframe::App for MediaApp {
                         ReorderAction::None => {}
                     }
                 }
-
                 update_toast(self, ui);
 
                 egui::CentralPanel::default().show_inside(ui, |ui| match self.view_mode {

@@ -9,6 +9,7 @@ use crate::utils::file_helpers::reveal_in_explorer;
 use egui::{CursorIcon, Rect, Response, Sense, Ui, Vec2};
 use std::sync::Arc;
 
+#[allow(clippy::too_many_arguments)]
 pub fn staging_card(
     ui: &mut Ui,
     item: &Arc<StagingItem>,
@@ -16,12 +17,14 @@ pub fn staging_card(
     size: f32,
     show_texture: bool,
     is_selected: bool,
+    is_detail_selected: bool,
     selection_count: usize,
     distribute_target: &mut Option<Arc<StagingItem>>,
     delete_request: &mut Option<Arc<StagingItem>>,
     bulk_delete_request: &mut bool,
     bulk_distribute_request: &mut bool,
     toggle_select: &mut bool,
+    select_request: &mut Option<Arc<StagingItem>>,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
 
@@ -109,11 +112,13 @@ pub fn staging_card(
         ui.add_space(2.0);
     });
 
-    if response.clicked() {
+    if response.double_clicked() {
+        *distribute_target = Some(Arc::clone(item));
+    } else if response.clicked() {
         if ui.input(|i| i.modifiers.ctrl) {
             *toggle_select = true;
         } else {
-            *distribute_target = Some(Arc::clone(item));
+            *select_request = Some(Arc::clone(item));
         }
     }
 
@@ -124,7 +129,12 @@ pub fn staging_card(
     let is_hovered = response.hovered();
     let inner = ui.painter().with_clip_rect(rect);
 
-    inner.rect_filled(rect, CARD_CR, CARD_BG);
+    let card_bg = if is_detail_selected && !is_selected {
+        CARD_BG.linear_multiply(1.18)
+    } else {
+        CARD_BG
+    };
+    inner.rect_filled(rect, CARD_CR, card_bg);
 
     let img_area = Rect::from_min_size(rect.min, Vec2::new(size, size - INFO_H));
 
@@ -141,9 +151,11 @@ pub fn staging_card(
 
     if is_selected {
         draw_selection_tint(&inner, img_area);
-    } else if is_hovered {
+    } else if is_hovered || is_detail_selected {
         draw_hover_tint(&inner, img_area);
-        draw_hover_label(&inner, rect, img_area, "Click to distribute", size);
+        if is_hovered {
+            draw_hover_label(&inner, rect, img_area, "Double-click to distribute", size);
+        }
     }
 
     if is_hovered {
@@ -151,7 +163,7 @@ pub fn staging_card(
     }
 
     draw_info_bar(&inner, rect, &item.name, size);
-    draw_card_border(&inner, rect, is_hovered, is_selected);
+    draw_card_border(&inner, rect, is_hovered, is_selected || is_detail_selected);
 
     response
 }

@@ -17,29 +17,23 @@ const LOAD_AHEAD_PX: f32 = 1200.0;
 
 fn build_group_set(items: &[Arc<MediaItem>]) -> HashSet<usize> {
     let mut key_to_indices: HashMap<String, Vec<usize>> = HashMap::new();
-
     for (i, item) in items.iter().enumerate() {
         let p = Path::new(&item.path);
-
         let dir = p
             .parent()
             .map(|d| d.to_string_lossy().to_lowercase())
             .unwrap_or_default();
-
         let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-
         let base = if let Some((b, _)) = parse_suffix_number(stem) {
             b.to_lowercase()
         } else {
             stem.to_lowercase()
         };
-
         key_to_indices
             .entry(format!("{dir}|{base}"))
             .or_default()
             .push(i);
     }
-
     key_to_indices
         .into_values()
         .filter(|v| v.len() >= 2)
@@ -67,6 +61,13 @@ pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
     let group_set = build_group_set(&app.displayed_items);
     let selection_count = app.selection.len();
 
+    let detail_path = app
+        .library_detail
+        .selected_item
+        .as_ref()
+        .map(|i| i.path.clone())
+        .unwrap_or_default();
+
     let rb_id = Id::new("media_view_rb");
     let rb: RubberBand = ui
         .ctx()
@@ -80,7 +81,8 @@ pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
     let mut edit_request: Option<Arc<MediaItem>> = None;
     let mut delete_request: Option<Arc<MediaItem>> = None;
     let mut reorder_request: Option<Arc<MediaItem>> = None;
-    let mut bulk_delete_request: bool = false;
+    let mut select_request: Option<Arc<MediaItem>> = None;
+    let mut bulk_delete_request = false;
     let mut card_rects: Vec<(usize, Rect)> = Vec::new();
     let mut toggle_paths: Vec<(usize, String)> = Vec::new();
 
@@ -99,7 +101,6 @@ pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
             for row in row_range.clone() {
                 ui.horizontal(|ui| {
                     ui.add_space(m.h_pad);
-
                     for col in 0..m.columns {
                         let idx = row * m.columns + col;
                         let Some(item) = app.displayed_items.get(idx) else {
@@ -108,6 +109,7 @@ pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
 
                         let in_group = group_set.contains(&idx);
                         let is_selected = app.selection.contains(&item.path);
+                        let is_detail_selected = item.path == detail_path;
                         let mut toggle_this = false;
                         let mut bulk_delete_this = false;
 
@@ -119,12 +121,14 @@ pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
                             app.show_previews,
                             in_group,
                             is_selected,
+                            is_detail_selected,
                             selection_count,
                             &mut edit_request,
                             &mut delete_request,
                             &mut reorder_request,
                             &mut bulk_delete_this,
                             &mut toggle_this,
+                            &mut select_request,
                         );
 
                         card_rects.push((idx, resp.rect));
@@ -148,7 +152,6 @@ pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
 
             let pre_start = row_range.start.saturating_sub(PREFETCH_MARGIN) * m.columns;
             let pre_end = (row_range.end + PREFETCH_MARGIN).min(m.total_rows) * m.columns;
-
             for idx in pre_start..vis_start {
                 if let Some(item) = app.displayed_items.get(idx) {
                     app.texture_manager.prefetch(&item.path);
@@ -178,7 +181,6 @@ pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
     let primary_released = ctx.input(|i| i.pointer.primary_released());
 
     let mut new_rb = rb;
-
     if !new_rb.active && primary_pressed {
         if let Some(pp) = pointer_pos {
             let on_card = card_rects.iter().any(|(_, r)| r.contains(pp));
@@ -192,7 +194,6 @@ pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
             }
         }
     }
-
     if new_rb.active {
         if primary_down {
             if let Some(pp) = pointer_pos {
@@ -215,9 +216,12 @@ pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
             new_rb.active = false;
         }
     }
-
     ctx.memory_mut(|mem| mem.data.insert_temp(rb_id, new_rb));
 
+    if let Some(item) = select_request {
+        app.clear_selection();
+        app.select_item(item, &ctx);
+    }
     if let Some(item) = edit_request {
         app.clear_selection();
         app.open_edit_modal(item);
@@ -242,7 +246,6 @@ pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
     let scroll_y = out.state.offset.y;
     let content_h = out.content_size.y;
     let visible_h = out.inner_rect.height();
-
     if content_h > visible_h && scroll_y > content_h - visible_h - LOAD_AHEAD_PX {
         app.load_next_page();
     }

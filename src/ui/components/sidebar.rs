@@ -14,11 +14,9 @@ use std::time::Instant;
 fn stat_chip(ui: &mut egui::Ui, label: &str, count: u32, active: bool) -> bool {
     let desired = Vec2::new(ui.available_width(), 28.0);
     let (rect, resp) = ui.allocate_exact_size(desired, Sense::click());
-
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-
     if ui.is_rect_visible(rect) {
         let bg = if active {
             C_BLURPLE
@@ -28,23 +26,20 @@ fn stat_chip(ui: &mut egui::Ui, label: &str, count: u32, active: bool) -> bool {
             Color32::TRANSPARENT
         };
         ui.painter().rect_filled(rect, CornerRadius::same(6), bg);
-
         if active {
             let stripe = egui::Rect::from_min_size(rect.min, Vec2::new(3.0, rect.height()));
             ui.painter()
                 .rect_filled(stripe, CornerRadius::same(2), Color32::WHITE);
         }
-
-        let text_color = if active { C_TEXT_HEADER } else { C_TEXT };
+        let tc = if active { C_TEXT_HEADER } else { C_TEXT };
         ui.painter().text(
             Pos2::new(rect.min.x + 10.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             label,
             FontId::proportional(12.5),
-            text_color,
+            tc,
         );
-
-        let badge_color = if active {
+        let bc = if active {
             Color32::from_rgba_premultiplied(255, 255, 255, 160)
         } else {
             C_TEXT_MUTED
@@ -54,10 +49,9 @@ fn stat_chip(ui: &mut egui::Ui, label: &str, count: u32, active: bool) -> bool {
             egui::Align2::RIGHT_CENTER,
             count.to_string(),
             FontId::proportional(11.0),
-            badge_color,
+            bc,
         );
     }
-
     resp.clicked()
 }
 
@@ -65,18 +59,14 @@ fn tag_flow_chip(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
     const H: f32 = 22.0;
     const PX: f32 = 8.0;
     const FONT: f32 = 11.0;
-
     let galley = ui.fonts_mut(|f| {
         f.layout_no_wrap(label.to_owned(), FontId::proportional(FONT), Color32::WHITE)
     });
-
     let w = galley.rect.width() + PX * 2.0;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, H), Sense::click());
-
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-
     if ui.is_rect_visible(rect) {
         let bg = if active {
             C_BLURPLE
@@ -85,15 +75,12 @@ fn tag_flow_chip(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
         } else {
             C_INPUT_BG
         };
-
         ui.painter().rect_filled(rect, CornerRadius::same(4), bg);
-
-        let text_color = if active { C_TEXT_HEADER } else { C_TEXT_MUTED };
-        let text_y = rect.center().y - galley.rect.height() / 2.0;
+        let tc = if active { C_TEXT_HEADER } else { C_TEXT_MUTED };
+        let ty = rect.center().y - galley.rect.height() / 2.0;
         ui.painter()
-            .galley(Pos2::new(rect.min.x + PX, text_y), galley, text_color);
+            .galley(Pos2::new(rect.min.x + PX, ty), galley, tc);
     }
-
     resp.clicked()
 }
 
@@ -115,6 +102,7 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     if sr.cleared {
         app.last_input_time = Instant::now();
         app.field_filter = None;
+        app.active_tags.clear();
         app.refresh_items();
     }
 
@@ -126,17 +114,14 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     } else {
         format!("{} items", app.displayed_items.len())
     };
-
     ui.horizontal(|ui| {
         ui.add_space(2.0);
         ui.style_mut().interaction.selectable_labels = false;
         ui.label(RichText::new(count_text).color(C_TEXT_MUTED).size(11.0));
     });
-
     ui.add_space(6.0);
 
     section_heading(ui, "FILTER");
-
     if filter_chip(ui, "All media", matches!(app.filter, MediaFilter::All)) {
         app.filter = MediaFilter::All;
     }
@@ -148,7 +133,6 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     }
 
     section_heading(ui, "SORT BY");
-
     Frame::NONE
         .fill(C_INPUT_BG)
         .corner_radius(CornerRadius::same(8))
@@ -170,7 +154,6 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
 
     if !app.sidebar_stats.top_artists.is_empty() {
         section_heading(ui, "TOP ARTISTS");
-
         let artists: Vec<(String, u32)> = app.sidebar_stats.top_artists.clone();
         let current_ff = app.field_filter.clone();
         for (artist, count) in &artists {
@@ -186,7 +169,6 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
 
     if !app.sidebar_stats.top_copyrights.is_empty() {
         section_heading(ui, "TOP COPYRIGHTS");
-
         let copyrights: Vec<(String, u32)> = app.sidebar_stats.top_copyrights.clone();
         let current_ff = app.field_filter.clone();
         for (cr, count) in &copyrights {
@@ -202,29 +184,59 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
 
     if !app.sidebar_stats.top_tags.is_empty() {
         section_heading(ui, "TOP TAGS");
-
+        if !app.active_tags.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(2.0);
+                ui.style_mut().interaction.selectable_labels = false;
+                ui.label(
+                    RichText::new(format!("{} active", app.active_tags.len()))
+                        .size(10.0)
+                        .color(C_BLURPLE),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            egui::Label::new(
+                                RichText::new("clear all").size(10.0).color(C_TEXT_MUTED),
+                            )
+                            .sense(Sense::click()),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        app.active_tags.clear();
+                        app.texture_manager.invalidate_prefetch();
+                        app.refresh_items();
+                    }
+                });
+            });
+            ui.add_space(2.0);
+        }
+        let mut clicked_tag: Option<String> = None;
         let tags: Vec<(String, u32)> = app.sidebar_stats.top_tags.clone();
-        let current_ff = app.field_filter.clone();
-
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
-            for (tag, _count) in &tags {
-                let active = current_ff
-                    .as_ref()
-                    .map(|f| matches!(f, FieldFilter::Tag(v) if v == tag))
-                    .unwrap_or(false);
+            for (tag, _) in &tags {
+                let active = app.active_tags.contains(tag.as_str());
                 if tag_flow_chip(ui, tag, active) {
-                    app.toggle_field_filter(FieldFilter::Tag(tag.clone()));
+                    clicked_tag = Some(tag.clone());
                 }
             }
         });
+        if let Some(t) = clicked_tag {
+            app.toggle_tag(t);
+        }
     }
 
     section_heading(ui, "SHOW PREVIEWS");
-
     let toggle_id = ui.make_persistent_id("toggle_previews");
-    if toggle(ui, toggle_id, &mut app.show_previews) && !app.show_previews {
-        app.texture_manager.invalidate_prefetch();
+    let prev_show = app.show_previews;
+    if toggle(ui, toggle_id, &mut app.show_previews) && app.show_previews != prev_show {
+        if !app.show_previews {
+            app.texture_manager.invalidate_prefetch();
+        }
+        let ctx = ui.ctx().clone();
+        app.on_show_previews_changed(&ctx);
     }
 
     if app.filter != prev_filter || app.sort != prev_sort {

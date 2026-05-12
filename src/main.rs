@@ -26,6 +26,15 @@ fn main() -> eframe::Result {
     #[cfg(windows)]
     let _singleton = infra::singleton::acquire();
 
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+        use windows::core::HSTRING;
+        unsafe {
+            let _ = SetCurrentProcessExplicitAppUserModelID(&HSTRING::from("Nexa"));
+        }
+    }
+
     let app_icon = {
         let png_bytes = include_bytes!("../assets/icons/icon.png");
 
@@ -43,7 +52,8 @@ fn main() -> eframe::Result {
     };
 
     let mut viewport = egui::ViewportBuilder::default()
-        .with_inner_size([1600.0, 900.0])
+        .with_inner_size([1920.0, 1060.0])
+        .with_min_inner_size([1024.0, 600.0])
         .with_title("Nexa")
         .with_decorations(false)
         .with_transparent(true)
@@ -60,7 +70,7 @@ fn main() -> eframe::Result {
     };
 
     eframe::run_native(
-        "nexa_app",
+        "Nexa",
         native_options,
         Box::new(|cc| Ok(Box::new(MediaApp::new(cc)))),
     )

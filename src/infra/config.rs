@@ -80,7 +80,7 @@ impl AppConfig {
     pub(crate) fn get_proj_dirs() -> &'static ProjectDirs {
         static DIRS: OnceLock<ProjectDirs> = OnceLock::new();
         DIRS.get_or_init(|| {
-            ProjectDirs::from("com", "envoid", "Nexa")
+            ProjectDirs::from("com", "Envo1d", "Nexa")
                 .expect("Unable to locate application system folders")
         })
     }

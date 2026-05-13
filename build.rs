@@ -35,6 +35,13 @@ fn embed_icon() {
     let mut res = winres::WindowsResource::new();
     res.set_icon(icon_path.to_str().expect("icon path is not valid UTF-8"));
 
+    res.set("FileDescription", "Nexa");
+    res.set("ProductName", "Nexa");
+    res.set("LegalCopyright", "© 2026 Envo1d");
+    res.set("CompanyName", "Envo1d");
+    res.set("InternalName", "Nexa");
+    res.set("OriginalFilename", "Nexa.exe");
+
     if let Err(e) = res.compile() {
         eprintln!("cargo:warning=winres failed to compile icon resource: {e}");
     }

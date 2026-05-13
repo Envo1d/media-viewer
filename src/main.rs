@@ -32,15 +32,6 @@ fn main() -> eframe::Result {
     #[cfg(windows)]
     let _singleton = infra::singleton::acquire();
 
-    #[cfg(windows)]
-    {
-        use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
-        use windows::core::HSTRING;
-        unsafe {
-            let _ = SetCurrentProcessExplicitAppUserModelID(&HSTRING::from("Nexa"));
-        }
-    }
-
     let app_icon = {
         let png_bytes = include_bytes!("../assets/icons/icon.png");
 

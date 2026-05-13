@@ -245,8 +245,8 @@ pub fn reindex_after_delete(deleted_path: &Path) -> Vec<(String, String, String)
                 ));
             }
             Err(e) => {
-                eprintln!(
-                    "[reindex] rename '{old_name}' → '{new_n}.{ext}' failed: {e}; \
+                tracing::error!(
+                    "Rename '{old_name}' → '{new_n}.{ext}' failed: {e}; \
                      stopping reindex to avoid inconsistent state"
                 );
                 return renames;
@@ -281,8 +281,9 @@ pub fn reindex_after_delete(deleted_path: &Path) -> Vec<(String, String, String)
                 }
             }
             Err(e) => {
-                eprintln!(
-                    "[reindex] rename '{base_stem} - 1.{ext}' → '{base_stem}.{ext}' failed: {e}"
+                tracing::error!(
+                    ?e,
+                    "Rename '{base_stem} - 1.{ext}' → '{base_stem}.{ext}' failed"
                 );
             }
         }
@@ -373,7 +374,14 @@ pub fn move_file(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 pub fn reveal_in_explorer(path: &str) {
+    let path = Path::new(path);
+
+    if path.is_dir() {
+        let _ = std::process::Command::new("explorer").arg(path).spawn();
+        return;
+    }
+
     let _ = std::process::Command::new("explorer")
-        .args(["/select,", path])
+        .args(["/select,", path.to_string_lossy().as_ref()])
         .spawn();
 }

@@ -441,6 +441,36 @@ fn cache_section(app: &mut MediaApp, ui: &mut egui::Ui) {
     });
 }
 
+fn logs_section(app: &mut MediaApp, ui: &mut egui::Ui) {
+    let icons = app.icons.as_ref().unwrap();
+    section_heading(ui, "LOGS");
+
+    let log_dir = crate::infra::logging::get_log_dir();
+
+    section_row(ui, true, true, |ui| {
+        icon(ui, icons.get("folder_logs"), 16.0);
+        ui.add_space(10.0);
+        ui.vertical(|ui| {
+            ui.add_space(12.0);
+            ui.label(RichText::new("Log files folder").size(12.5).color(C_TEXT));
+            let shown = {
+                let s = log_dir.to_string_lossy();
+                if s.len() > 42 {
+                    format!("…{}", &s[s.len() - 40..])
+                } else {
+                    s.to_string()
+                }
+            };
+            ui.label(RichText::new(shown).size(10.5).color(C_TEXT_MUTED));
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if pill_button(ui, "Open in Explorer", true) {
+                crate::utils::file_helpers::reveal_in_explorer(&log_dir.to_string_lossy());
+            }
+        });
+    });
+}
+
 pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
     if !app.settings_open.unwrap_or(false) {
         return;
@@ -478,6 +508,7 @@ pub fn settings_modal(app: &mut MediaApp, ui: &egui::Ui) {
                         indexing_section(app, ui);
                         appearance_section(app, ui);
                         cache_section(app, ui);
+                        logs_section(app, ui);
                         update_section(app, ui);
                     });
 

@@ -1,3 +1,6 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use crate::infra::logging;
 use crate::ui::app::MediaApp;
 
 mod core;
@@ -7,6 +10,9 @@ mod ui;
 mod utils;
 
 fn main() -> eframe::Result {
+    logging::init();
+    tracing::info!("Nexa {} starting up...", env!("CARGO_PKG_VERSION"));
+
     #[cfg(windows)]
     {
         let args: Vec<String> = std::env::args().collect();

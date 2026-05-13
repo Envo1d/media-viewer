@@ -45,8 +45,8 @@ pub fn acquire() -> SingletonGuard {
         }
 
         if handle.is_invalid() {
-            eprintln!(
-                "[singleton] CreateMutexW failed (error {:?}); \
+            tracing::error!(
+                "CreateMutexW failed (error {:?}); \
                  running without singleton protection.",
                 last_error
             );

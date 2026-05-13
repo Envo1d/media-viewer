@@ -109,7 +109,7 @@ fn debounce_loop(
                     }
                 }
             }
-            Ok(Err(e)) => eprintln!("[watcher] notify error: {e:?}"),
+            Ok(Err(e)) => tracing::error!(?e, "Notify error"),
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }
@@ -137,12 +137,12 @@ impl FileWatcher {
             },
             Config::default(),
         )
-        .map_err(|e| eprintln!("[watcher] failed to create watcher: {e:?}"))
+        .map_err(|e| tracing::error!(?e, "Failed to create watcher"))
         .ok()?;
 
         watcher
             .watch(Path::new(&root_path), RecursiveMode::Recursive)
-            .map_err(|e| eprintln!("[watcher] failed to watch {root_path:?}: {e:?}"))
+            .map_err(|e| tracing::error!(path = %root_path, ?e, "Failed to watch"))
             .ok()?;
 
         let db_tx = get_db().clone();
@@ -154,7 +154,7 @@ impl FileWatcher {
             .spawn(move || debounce_loop(raw_rx, db_tx, watch_tx_bg, root, mapping, char_sep))
             .ok()?;
 
-        eprintln!("[watcher] watching: {root_path}");
+        tracing::info!(path = %root_path,"Starting watching directory");
 
         Some(Self {
             _watcher: watcher,

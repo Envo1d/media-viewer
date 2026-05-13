@@ -158,7 +158,7 @@ impl MediaApp {
                         .load_texture("app_icon", img, Default::default()),
                 ),
                 Err(_) => {
-                    eprintln!("Error: Unable to load assets/icons/icon.png");
+                    tracing::error!("Failed to load app icon");
                     None
                 }
             }
@@ -1003,7 +1003,7 @@ impl MediaApp {
             self.library_detail.reset_async();
         }
         if let Err(e) = delete(&item.path) {
-            eprintln!("[delete] failed to trash {}: {e}", item.path);
+            tracing::error!(path = %item.path, ?e, "Failed to delete file");
             return;
         }
         DbService::delete_by_path(item.path.clone());
@@ -1032,7 +1032,7 @@ impl MediaApp {
             self.staging_detail.reset_async();
         }
         if let Err(e) = delete(&item.path) {
-            eprintln!("[delete] failed to trash {}: {e}", item.path);
+            tracing::error!(path = %item.path, ?e, "Failed to delete file");
             return;
         }
         DbService::staging_delete_by_path(item.path.clone());
@@ -1062,7 +1062,7 @@ impl MediaApp {
         for item in items {
             let dp = PathBuf::from(&item.path);
             if let Err(e) = delete(&item.path) {
-                eprintln!("[bulk-delete] failed to trash {}: {e}", item.path);
+                tracing::error!(path = %item.path, ?e, "Failed to delete file during bulk-delete");
                 continue;
             }
             DbService::delete_by_path(item.path.clone());
@@ -1096,7 +1096,7 @@ impl MediaApp {
         }
         for item in items {
             if let Err(e) = delete(&item.path) {
-                eprintln!("[bulk-delete] failed to trash {}: {e}", item.path);
+                tracing::error!(path = %item.path, ?e, "Failed to delete file during bulk-delete");
                 continue;
             }
             DbService::staging_delete_by_path(item.path.clone());

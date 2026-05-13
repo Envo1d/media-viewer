@@ -25,11 +25,21 @@ fn start_write_worker() -> (Sender<DbCommand>, crossbeam_channel::Receiver<()>) 
                         DbCommand::DeleteNotSeen(scan_id) => db.delete_not_seen(scan_id),
                         DbCommand::DeleteByPath(path) => db.delete_by_path(&path),
 
-                        DbCommand::UpdateMetadata { path, copyright, artist, characters, tags } => {
+                        DbCommand::UpdateMetadata {
+                            path,
+                            copyright,
+                            artist,
+                            characters,
+                            tags,
+                        } => {
                             db.update_metadata(&path, &copyright, &artist, &characters, &tags);
                         }
 
-                        DbCommand::RenameMediaPath { old_path, new_path, new_name } => {
+                        DbCommand::RenameMediaPath {
+                            old_path,
+                            new_path,
+                            new_name,
+                        } => {
                             db.rename_media_path(&old_path, &new_path, &new_name);
                         }
 
@@ -40,18 +50,20 @@ fn start_write_worker() -> (Sender<DbCommand>, crossbeam_channel::Receiver<()>) 
                         DbCommand::StagingUpsertBatch(items, scan_id) => {
                             db.staging_upsert_batch(&items, scan_id)
                         }
-                        DbCommand::StagingDeleteNotSeen(scan_id) => db.staging_delete_not_seen(scan_id),
+                        DbCommand::StagingDeleteNotSeen(scan_id) => {
+                            db.staging_delete_not_seen(scan_id)
+                        }
                         DbCommand::StagingDeleteByPath(path) => db.staging_delete_by_path(&path),
 
                         other => {
-                            eprintln!(
-                                "[db-write-worker] received a read command — route it to get_read_db(): {:?}",
+                            tracing::error!(
+                                "Received a read command — route it to get_read_db(): {:?}",
                                 std::mem::discriminant(&other)
                             );
                         }
                     }))
                 {
-                    eprintln!("[db-write-worker] panic: {:?}", e);
+                    tracing::error!(?e, "Write worker panic");
                 }
             }
         })
@@ -73,18 +85,60 @@ fn start_read_worker(write_ready_rx: crossbeam_channel::Receiver<()>) -> Sender<
             for cmd in rx {
                 if let Err(e) =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match cmd {
-                        DbCommand::Query { id, limit, offset, filter, sort, field_filter, tag_filters, resp } => {
-                            let items = db.query(limit, offset, &filter, &sort, &field_filter, &tag_filters);
-                            let arced: Vec<std::sync::Arc<_>> = items.into_iter().map(std::sync::Arc::new).collect();
+                        DbCommand::Query {
+                            id,
+                            limit,
+                            offset,
+                            filter,
+                            sort,
+                            field_filter,
+                            tag_filters,
+                            resp,
+                        } => {
+                            let items = db.query(
+                                limit,
+                                offset,
+                                &filter,
+                                &sort,
+                                &field_filter,
+                                &tag_filters,
+                            );
+                            let arced: Vec<std::sync::Arc<_>> =
+                                items.into_iter().map(std::sync::Arc::new).collect();
                             let _ = resp.send((id, arced));
                         }
-                        DbCommand::Search { id, query, limit, offset, filter, sort, field_filter, tag_filters, resp } => {
-                            let items = db.search(&query, limit, offset, &filter, &sort, &field_filter, &tag_filters);
-                            let arced: Vec<std::sync::Arc<_>> = items.into_iter().map(std::sync::Arc::new).collect();
+                        DbCommand::Search {
+                            id,
+                            query,
+                            limit,
+                            offset,
+                            filter,
+                            sort,
+                            field_filter,
+                            tag_filters,
+                            resp,
+                        } => {
+                            let items = db.search(
+                                &query,
+                                limit,
+                                offset,
+                                &filter,
+                                &sort,
+                                &field_filter,
+                                &tag_filters,
+                            );
+                            let arced: Vec<std::sync::Arc<_>> =
+                                items.into_iter().map(std::sync::Arc::new).collect();
                             let _ = resp.send((id, arced));
                         }
-                        DbCommand::QueryStatsForValues { copyrights, artists, tags, resp } => {
-                            let _ = resp.send(db.query_stats_for_values(&copyrights, &artists, &tags));
+                        DbCommand::QueryStatsForValues {
+                            copyrights,
+                            artists,
+                            tags,
+                            resp,
+                        } => {
+                            let _ =
+                                resp.send(db.query_stats_for_values(&copyrights, &artists, &tags));
                         }
 
                         DbCommand::QueryAutocomplete { resp } => {
@@ -93,24 +147,30 @@ fn start_read_worker(write_ready_rx: crossbeam_channel::Receiver<()>) -> Sender<
 
                         DbCommand::StagingQuery { resp } => {
                             let items = db.staging_query();
-                            let arced: Vec<std::sync::Arc<_>> = items.into_iter().map(std::sync::Arc::new).collect();
+                            let arced: Vec<std::sync::Arc<_>> =
+                                items.into_iter().map(std::sync::Arc::new).collect();
                             let _ = resp.send(arced);
                         }
-                        DbCommand::QueryGroup { base_stem, dir, resp } => {
+                        DbCommand::QueryGroup {
+                            base_stem,
+                            dir,
+                            resp,
+                        } => {
                             let items = db.query_group(&base_stem, &dir);
-                            let arced: Vec<std::sync::Arc<_>> = items.into_iter().map(std::sync::Arc::new).collect();
+                            let arced: Vec<std::sync::Arc<_>> =
+                                items.into_iter().map(std::sync::Arc::new).collect();
                             let _ = resp.send(arced);
                         }
 
                         other => {
-                            eprintln!(
-                                "[db-read-worker] received a write command — route it to get_db(): {:?}",
+                            tracing::error!(
+                                "Received unexpected db command: {:?}",
                                 std::mem::discriminant(&other)
                             );
                         }
                     }))
                 {
-                    eprintln!("[db-read-worker] panic: {:?}", e);
+                    tracing::error!(?e, "Read worker panic");
                 }
             }
         })
@@ -122,14 +182,22 @@ fn start_read_worker(write_ready_rx: crossbeam_channel::Receiver<()>) -> Sender<
 pub fn init_db() {
     let (write_tx, ready_rx) = start_write_worker();
     let read_tx = start_read_worker(ready_rx);
-    WRITE_DB.set(write_tx).expect("DB write worker already initialised");
-    READ_DB.set(read_tx).expect("DB read worker already initialised");
+    WRITE_DB
+        .set(write_tx)
+        .expect("DB write worker already initialised");
+    READ_DB
+        .set(read_tx)
+        .expect("DB read worker already initialised");
 }
 
 pub fn get_db() -> &'static Sender<DbCommand> {
-    WRITE_DB.get().expect("DB not initialised — call init_db() first")
+    WRITE_DB
+        .get()
+        .expect("DB not initialised — call init_db() first")
 }
 
 pub fn get_read_db() -> &'static Sender<DbCommand> {
-    READ_DB.get().expect("DB not initialised — call init_db() first")
+    READ_DB
+        .get()
+        .expect("DB not initialised — call init_db() first")
 }

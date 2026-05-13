@@ -77,7 +77,7 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    fn get_proj_dirs() -> &'static ProjectDirs {
+    pub(crate) fn get_proj_dirs() -> &'static ProjectDirs {
         static DIRS: OnceLock<ProjectDirs> = OnceLock::new();
         DIRS.get_or_init(|| {
             ProjectDirs::from("com", "envoid", "Nexa")

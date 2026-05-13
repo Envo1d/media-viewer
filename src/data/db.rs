@@ -94,7 +94,7 @@ impl Database {
         let tx = match self.conn.transaction() {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("upsert_batch tx error: {e}");
+                tracing::error!(?e, "Upsert batch tx");
                 return;
             }
         };
@@ -104,7 +104,7 @@ impl Database {
             ) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("touch prepare: {e}");
+                    tracing::error!(?e, "Touch prepare");
                     return;
                 }
             };
@@ -123,7 +123,7 @@ impl Database {
             ) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("upsert prepare: {e}");
+                    tracing::error!(?e, "Upsert prepare");
                     return;
                 }
             };
@@ -149,7 +149,7 @@ impl Database {
             }
         }
         if let Err(e) = tx.commit() {
-            eprintln!("upsert_batch commit: {e}");
+            tracing::error!(?e, "Upsert batch commit");
         }
     }
 
@@ -172,7 +172,7 @@ impl Database {
                 item.tags_db(),
             ],
         ) {
-            eprintln!("insert_distributed error: {e}");
+            tracing::error!(?e, "Insert_distributed");
         }
     }
 
@@ -188,7 +188,7 @@ impl Database {
             "UPDATE media SET copyright=?2, artist=?3, characters=?4, tags=?5 WHERE path=?1",
             rusqlite::params![path, copyright, artist, characters, tags],
         ) {
-            eprintln!("update_metadata error: {e}");
+            tracing::error!(?e, "Update metadata");
         }
     }
 
@@ -197,7 +197,7 @@ impl Database {
             "UPDATE media SET path=?2, name=?3 WHERE path=?1",
             rusqlite::params![old_path, new_path, new_name],
         ) {
-            eprintln!("rename_media_path error: {e}");
+            tracing::error!(?e, "Rename media path");
         }
     }
 
@@ -208,7 +208,7 @@ impl Database {
         let tx = match self.conn.transaction() {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("rename_group_batch begin tx: {e}");
+                tracing::error!(?e, "Rename group batch begin tx");
                 return;
             }
         };
@@ -221,7 +221,7 @@ impl Database {
                 "UPDATE media SET path=?2, name=?3 WHERE path=?1",
                 rusqlite::params![orig_path, temp_path, temp_name],
             ) {
-                eprintln!("rename_group_batch phase-A error ({orig_path}→{temp_path}): {e}");
+                tracing::error!(?e, "Rename group batch phase-A ({orig_path}→{temp_path})");
             }
         }
         for (_op, temp_path, final_path, final_name) in renames {
@@ -229,12 +229,12 @@ impl Database {
                 "UPDATE media SET path=?2, name=?3 WHERE path=?1",
                 rusqlite::params![temp_path, final_path, final_name],
             ) {
-                eprintln!("rename_group_batch phase-B error ({temp_path}→{final_path}): {e}");
+                tracing::error!(?e, "Rename group batch phase-B ({temp_path}→{final_path})");
             }
         }
 
         if let Err(e) = tx.commit() {
-            eprintln!("rename_group_batch commit: {e}");
+            tracing::error!(?e, "Rename group batch commit");
         }
     }
 
@@ -386,7 +386,7 @@ impl Database {
         let mut stmt = match self.conn.prepare_cached(&sql) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("query prepare: {e}");
+                tracing::error!(?e, "Query prepare");
                 return Vec::new();
             }
         };
@@ -421,7 +421,7 @@ impl Database {
         result
             .map(|it| it.filter_map(Result::ok).collect())
             .unwrap_or_else(|e| {
-                eprintln!("query error: {e}");
+                tracing::error!(?e, "Query");
                 Vec::new()
             })
     }
@@ -458,7 +458,7 @@ impl Database {
         let mut stmt = match self.conn.prepare_cached(&sql) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("search prepare: {e}");
+                tracing::error!(?e, "Search prepare");
                 return Vec::new();
             }
         };
@@ -495,7 +495,7 @@ impl Database {
         result
             .map(|it| it.filter_map(Result::ok).collect())
             .unwrap_or_else(|e| {
-                eprintln!("search error: {e}");
+                tracing::error!(?e, "Search");
                 Vec::new()
             })
     }
@@ -505,7 +505,7 @@ impl Database {
             "DELETE FROM media WHERE last_seen_scan < ?1",
             rusqlite::params![scan_id],
         ) {
-            eprintln!("delete_not_seen: {e}");
+            tracing::error!(?e, "Delete not seen");
         }
     }
 
@@ -514,7 +514,7 @@ impl Database {
             .conn
             .execute("DELETE FROM media WHERE path=?1", rusqlite::params![path])
         {
-            eprintln!("delete_by_path: {e}");
+            tracing::error!(?e, "Delete by path");
         }
     }
 
@@ -522,7 +522,7 @@ impl Database {
         let tx = match self.conn.transaction() {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("staging_upsert tx: {e}");
+                tracing::error!(?e, "Staging upsert tx");
                 return;
             }
         };
@@ -532,13 +532,13 @@ impl Database {
             ) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("staging touch: {e}");
+                    tracing::error!(?e, "Staging touch");
                     return;
                 }
             };
             let mut ins = match tx.prepare_cached(
                 "INSERT OR IGNORE INTO staging (path,name,media_type,modified,last_seen_scan) VALUES(?1,?2,?3,?4,?5)",
-            ) { Ok(s) => s, Err(e) => { eprintln!("staging ins: {e}"); return; } };
+            ) { Ok(s) => s, Err(e) => { tracing::error!(?e, "Staging insert"); return; } };
             for item in items {
                 let t = touch
                     .execute(rusqlite::params![item.path, item.modified, scan_id])
@@ -556,7 +556,7 @@ impl Database {
             }
         }
         if let Err(e) = tx.commit() {
-            eprintln!("staging_upsert commit: {e}");
+            tracing::error!(?e, "Staging upsert commit");
         }
     }
 
@@ -565,7 +565,7 @@ impl Database {
             "DELETE FROM staging WHERE last_seen_scan < ?1",
             rusqlite::params![scan_id],
         ) {
-            eprintln!("staging_delete_not_seen: {e}");
+            tracing::error!(?e, "Staging delete not");
         }
     }
 
@@ -574,7 +574,7 @@ impl Database {
             .conn
             .execute("DELETE FROM staging WHERE path=?1", rusqlite::params![path])
         {
-            eprintln!("staging_delete_by_path: {e}");
+            tracing::error!(?e, "Staging delete by path");
         }
     }
 
@@ -585,7 +585,7 @@ impl Database {
         {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("staging_query prepare: {e}");
+                tracing::error!(?e, "Staging query prepare");
                 return Vec::new();
             }
         };
@@ -593,7 +593,7 @@ impl Database {
         stmt.query_map([], map_staging_item)
             .map(|it| it.filter_map(Result::ok).collect())
             .unwrap_or_else(|e| {
-                eprintln!("staging_query: {e}");
+                tracing::error!(?e, "Staging query");
                 Vec::new()
             })
     }
@@ -625,7 +625,7 @@ impl Database {
         let mut stmt = match self.conn.prepare_cached(&sql) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("query_group prepare: {e}");
+                tracing::error!(?e, "Query group prepare");
                 return Vec::new();
             }
         };
@@ -636,7 +636,7 @@ impl Database {
         )
         .map(|it| it.filter_map(Result::ok).collect())
         .unwrap_or_else(|e| {
-            eprintln!("query_group: {e}");
+            tracing::error!(?e, "Query group");
             Vec::new()
         })
     }

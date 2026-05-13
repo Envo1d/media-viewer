@@ -19,6 +19,11 @@ impl IconRegistry {
         );
         this.load(
             ctx,
+            "folder_logs",
+            include_bytes!("../../assets/icons/folder_logs.svg"),
+        );
+        this.load(
+            ctx,
             "folder_open",
             include_bytes!("../../assets/icons/folder_open.svg"),
         );

@@ -338,7 +338,7 @@ pub fn run_apply_update(parent_pid: u32, pending_path: &str, target_path: &str) 
         }
     }
 
-    eprintln!("[updater] failed to replace executable after 8 attempts — aborting update");
+    tracing::error!("Failed to replace executable after 8 attempts — aborting update");
     fs::remove_file(pending).ok();
     std::process::exit(1);
 }

@@ -53,7 +53,7 @@ pub fn query_video_properties(path: &str) -> VideoProperties {
 
         let outcome: windows::core::Result<()> = (|| {
             let item: IShellItem2 = SHCreateItemFromParsingName(&HSTRING::from(path), None)?;
-            
+
             let flags =
                 GETPROPERTYSTOREFLAGS(GPS_DEFAULT.0 | GPS_BESTEFFORT.0 | GPS_OPENSLOWITEM.0);
 
@@ -100,7 +100,7 @@ pub fn query_video_properties(path: &str) -> VideoProperties {
         })();
 
         if let Err(e) = outcome {
-            eprintln!("[windows_media] property query failed for '{path}': {e:?}");
+            tracing::error!(path = %path, ?e, "Property query failed");
         }
 
         CoUninitialize();

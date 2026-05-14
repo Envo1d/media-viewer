@@ -38,22 +38,22 @@ fn split_cte(col: &str) -> String {
     )
 }
 
-fn tag_clauses(count: usize) -> String {
+fn pipe_clauses(col: &str, count: usize) -> String {
     (0..count)
-        .map(|_| "AND ('|' || tags || '|') LIKE ?")
+        .map(|_| format!("AND ('|' || {col} || '|') LIKE ?"))
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-fn tag_clauses_fts(count: usize) -> String {
+fn pipe_clauses_fts(col: &str, count: usize) -> String {
     (0..count)
-        .map(|_| "AND ('|' || m.tags || '|') LIKE ?")
+        .map(|_| format!("AND ('|' || m.{col} || '|') LIKE ?"))
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-fn tag_like_params(tags: &[String]) -> Vec<String> {
-    tags.iter().map(|t| format!("%|{}|%", t)).collect()
+fn pipe_like_params(values: &[String]) -> Vec<String> {
+    values.iter().map(|v| format!("%|{}|%", v)).collect()
 }
 
 pub struct Database {
@@ -243,6 +243,7 @@ impl Database {
         copyrights: &[String],
         artists: &[String],
         tags: &[String],
+        characters: &[String],
     ) -> LibraryStats {
         fn placeholders(n: usize) -> String {
             (0..n).map(|_| "?").collect::<Vec<_>>().join(",")
@@ -299,10 +300,26 @@ impl Database {
             })
             .collect();
 
+        let top_characters: Vec<(String, u32)> = characters
+            .iter()
+            .filter(|v| !v.is_empty())
+            .filter_map(|ch| {
+                self.conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM media WHERE ('|'||characters||'|') LIKE ?1",
+                        rusqlite::params![format!("%|{}|%", ch)],
+                        |r| r.get::<_, u32>(0),
+                    )
+                    .ok()
+                    .map(|cnt| (ch.clone(), cnt))
+            })
+            .collect();
+
         LibraryStats {
             top_artists,
             top_copyrights,
             top_tags,
+            top_characters,
         }
     }
 
@@ -369,18 +386,21 @@ impl Database {
         sort: &SortOrder,
         field_filter: &Option<FieldFilter>,
         tag_filters: &[String],
+        character_filters: &[String],
     ) -> Vec<MediaItem> {
         let ff_clause = field_filter
             .as_ref()
             .map(|f| f.to_where_sql())
             .unwrap_or("");
-        let tf_clause = tag_clauses(tag_filters.len());
+        let tf_clause = pipe_clauses("tags", tag_filters.len());
+        let cf_clause = pipe_clauses("characters", character_filters.len());
         let sql = format!(
-            "SELECT {c} FROM media WHERE 1=1 {f} {ff} {tf} {s} LIMIT ? OFFSET ?",
+            "SELECT {c} FROM media WHERE 1=1 {f} {ff} {tf} {cf} {s} LIMIT ? OFFSET ?",
             c = SELECT_COLS,
             f = filter.to_sql(),
             ff = ff_clause,
             tf = tf_clause,
+            cf = cf_clause,
             s = sort.to_sql(),
         );
         let mut stmt = match self.conn.prepare_cached(&sql) {
@@ -390,40 +410,34 @@ impl Database {
                 return Vec::new();
             }
         };
-        let tag_likes = tag_like_params(tag_filters);
-        let (li, oi) = (limit as i64, offset as i64);
 
-        let result = if let Some(ff) = field_filter {
-            let fv = ff.param_value();
-            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            params.push(Box::new(fv));
-            for t in &tag_likes {
-                params.push(Box::new(t.clone()));
-            }
-            params.push(Box::new(li));
-            params.push(Box::new(oi));
-            stmt.query_map(
-                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-                map_media_item,
-            )
-        } else {
-            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            for t in &tag_likes {
-                params.push(Box::new(t.clone()));
-            }
-            params.push(Box::new(li));
-            params.push(Box::new(oi));
-            stmt.query_map(
-                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-                map_media_item,
-            )
-        };
-        result
-            .map(|it| it.filter_map(Result::ok).collect())
-            .unwrap_or_else(|e| {
-                tracing::error!(?e, "Query");
-                Vec::new()
-            })
+        let tag_likes = pipe_like_params(tag_filters);
+        let char_likes = pipe_like_params(character_filters);
+        let li = limit as i64;
+        let oi = offset as i64;
+
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(ff) = field_filter {
+            params.push(Box::new(ff.param_value()));
+        }
+        for t in &tag_likes {
+            params.push(Box::new(t.clone()));
+        }
+        for c in &char_likes {
+            params.push(Box::new(c.clone()));
+        }
+        params.push(Box::new(li));
+        params.push(Box::new(oi));
+
+        stmt.query_map(
+            rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+            map_media_item,
+        )
+        .map(|it| it.filter_map(Result::ok).collect())
+        .unwrap_or_else(|e| {
+            tracing::error!(?e, "Query");
+            Vec::new()
+        })
     }
 
     pub fn search(
@@ -435,24 +449,35 @@ impl Database {
         sort: &SortOrder,
         field_filter: &Option<FieldFilter>,
         tag_filters: &[String],
+        character_filters: &[String],
     ) -> Vec<MediaItem> {
         let raw = build_search_query(input);
         if raw.is_empty() {
-            return self.query(limit, offset, filter, sort, field_filter, tag_filters);
+            return self.query(
+                limit,
+                offset,
+                filter,
+                sort,
+                field_filter,
+                tag_filters,
+                character_filters,
+            );
         }
         let fts_q = format!("{}: {}", FTS_COLUMN_FILTER, raw);
         let ff_clause = field_filter
             .as_ref()
             .map(|f| f.to_where_sql_fts())
             .unwrap_or("");
-        let tf_clause = tag_clauses_fts(tag_filters.len());
+        let tf_clause = pipe_clauses_fts("tags", tag_filters.len());
+        let cf_clause = pipe_clauses_fts("characters", character_filters.len());
         let sql = format!(
             "SELECT {c} FROM media m JOIN media_fts ON m.rowid = media_fts.rowid \
-             WHERE media_fts MATCH ? {f} {ff} {tf} {s} LIMIT ? OFFSET ?",
+             WHERE media_fts MATCH ? {f} {ff} {tf} {cf} {s} LIMIT ? OFFSET ?",
             c = SELECT_COLS_FTS,
             f = filter.to_sql_fts(),
             ff = ff_clause,
             tf = tf_clause,
+            cf = cf_clause,
             s = sort.to_sql_fts(),
         );
         let mut stmt = match self.conn.prepare_cached(&sql) {
@@ -462,42 +487,35 @@ impl Database {
                 return Vec::new();
             }
         };
-        let tag_likes = tag_like_params(tag_filters);
-        let (li, oi) = (limit as i64, offset as i64);
 
-        let result = if let Some(ff) = field_filter {
-            let fv = ff.param_value();
-            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            params.push(Box::new(fts_q));
-            params.push(Box::new(fv));
-            for t in &tag_likes {
-                params.push(Box::new(t.clone()));
-            }
-            params.push(Box::new(li));
-            params.push(Box::new(oi));
-            stmt.query_map(
-                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-                map_media_item,
-            )
-        } else {
-            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            params.push(Box::new(fts_q));
-            for t in &tag_likes {
-                params.push(Box::new(t.clone()));
-            }
-            params.push(Box::new(li));
-            params.push(Box::new(oi));
-            stmt.query_map(
-                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-                map_media_item,
-            )
-        };
-        result
-            .map(|it| it.filter_map(Result::ok).collect())
-            .unwrap_or_else(|e| {
-                tracing::error!(?e, "Search");
-                Vec::new()
-            })
+        let tag_likes = pipe_like_params(tag_filters);
+        let char_likes = pipe_like_params(character_filters);
+        let li = limit as i64;
+        let oi = offset as i64;
+
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params.push(Box::new(fts_q));
+        if let Some(ff) = field_filter {
+            params.push(Box::new(ff.param_value()));
+        }
+        for t in &tag_likes {
+            params.push(Box::new(t.clone()));
+        }
+        for c in &char_likes {
+            params.push(Box::new(c.clone()));
+        }
+        params.push(Box::new(li));
+        params.push(Box::new(oi));
+
+        stmt.query_map(
+            rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+            map_media_item,
+        )
+        .map(|it| it.filter_map(Result::ok).collect())
+        .unwrap_or_else(|e| {
+            tracing::error!(?e, "Search");
+            Vec::new()
+        })
     }
 
     pub fn delete_not_seen(&self, scan_id: i64) {

@@ -94,6 +94,7 @@ pub struct LibraryStats {
     pub top_artists: Vec<(String, u32)>,
     pub top_copyrights: Vec<(String, u32)>,
     pub top_tags: Vec<(String, u32)>,
+    pub top_characters: Vec<(String, u32)>,
 }
 
 // Autocomplete
@@ -213,6 +214,7 @@ pub enum DbCommand {
         sort: SortOrder,
         field_filter: Option<FieldFilter>,
         tag_filters: Vec<String>,
+        character_filters: Vec<String>,
         resp: Sender<(u64, Vec<Arc<MediaItem>>)>,
     },
 
@@ -225,6 +227,7 @@ pub enum DbCommand {
         sort: SortOrder,
         field_filter: Option<FieldFilter>,
         tag_filters: Vec<String>,
+        character_filters: Vec<String>,
         resp: Sender<(u64, Vec<Arc<MediaItem>>)>,
     },
 
@@ -232,6 +235,7 @@ pub enum DbCommand {
         copyrights: Vec<String>,
         artists: Vec<String>,
         tags: Vec<String>,
+        characters: Vec<String>,
         resp: Sender<LibraryStats>,
     },
     QueryAutocomplete {

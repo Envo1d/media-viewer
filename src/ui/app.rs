@@ -66,6 +66,7 @@ pub struct MediaApp {
     pub show_previews: bool,
     pub field_filter: Option<FieldFilter>,
     pub active_tags: HashSet<String>,
+    pub active_characters: HashSet<String>,
 
     // Data – main library
     pub scan_manager: ScanManager,
@@ -209,6 +210,7 @@ impl MediaApp {
             app_icon,
             field_filter: None,
             active_tags: HashSet::new(),
+            active_characters: HashSet::new(),
             sidebar_stats: LibraryStats::default(),
             stats_rx: None,
             autocomplete: AutocompleteData::default(),
@@ -474,8 +476,24 @@ impl MediaApp {
         self.refresh_items();
     }
 
+    pub fn toggle_character(&mut self, ch: String) {
+        if self.active_characters.contains(&ch) {
+            self.active_characters.remove(&ch);
+        } else {
+            self.active_characters.insert(ch);
+        }
+        self.texture_manager.invalidate_prefetch();
+        self.refresh_items();
+    }
+
     fn tag_filters_vec(&self) -> Vec<String> {
         let mut v: Vec<String> = self.active_tags.iter().cloned().collect();
+        v.sort();
+        v
+    }
+
+    fn character_filters_vec(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.active_characters.iter().cloned().collect();
         v.sort();
         v
     }
@@ -702,9 +720,12 @@ impl MediaApp {
             self.sidebar_stats = LibraryStats::default();
             return;
         }
+
         let mut copyrights = Vec::new();
         let mut artists = Vec::new();
         let mut tags = Vec::new();
+        let mut characters = Vec::new();
+
         for item in &self.displayed_items[..n] {
             if !item.copyright.is_empty() && !copyrights.contains(&item.copyright) {
                 copyrights.push(item.copyright.clone());
@@ -717,14 +738,21 @@ impl MediaApp {
                     tags.push(tag.clone());
                 }
             }
+            for ch in &item.characters {
+                if !ch.is_empty() && !characters.contains(ch) {
+                    characters.push(ch.clone());
+                }
+            }
         }
 
-        if copyrights.is_empty() && artists.is_empty() && tags.is_empty() {
+        if copyrights.is_empty() && artists.is_empty() && tags.is_empty() && characters.is_empty() {
             self.sidebar_stats = LibraryStats::default();
             return;
         }
 
-        self.stats_rx = Some(DbService::query_stats_for_values(copyrights, artists, tags));
+        self.stats_rx = Some(DbService::query_stats_for_values(
+            copyrights, artists, tags, characters,
+        ));
     }
 
     pub fn request_autocomplete(&mut self) {
@@ -800,8 +828,17 @@ impl MediaApp {
         }
         let ff = self.field_filter.clone();
         let tf = self.tag_filters_vec();
+        let cf = self.character_filters_vec();
         let (id, rx) = if self.search_input.trim().is_empty() {
-            DbService::query(PAGE_SIZE, 0, self.filter.clone(), self.sort.clone(), ff, tf)
+            DbService::query(
+                PAGE_SIZE,
+                0,
+                self.filter.clone(),
+                self.sort.clone(),
+                ff,
+                tf,
+                cf,
+            )
         } else {
             DbService::search(
                 self.search_input.clone(),
@@ -811,6 +848,7 @@ impl MediaApp {
                 self.sort.clone(),
                 ff,
                 tf,
+                cf,
             )
         };
 
@@ -863,6 +901,7 @@ impl MediaApp {
         let snapshot = self.current_query_id;
         let ff = self.field_filter.clone();
         let tf = self.tag_filters_vec();
+        let cf = self.character_filters_vec();
         let (db_id, rx) = if self.search_input.trim().is_empty() {
             DbService::query(
                 PAGE_SIZE,
@@ -871,6 +910,7 @@ impl MediaApp {
                 self.sort.clone(),
                 ff,
                 tf,
+                cf,
             )
         } else {
             DbService::search(
@@ -881,6 +921,7 @@ impl MediaApp {
                 self.sort.clone(),
                 ff,
                 tf,
+                cf,
             )
         };
         self.pending_queries.push((snapshot, db_id, rx));

@@ -527,18 +527,25 @@ fn detail_panel_library(app: &mut MediaApp, ui: &mut egui::Ui) {
                         );
                         ui.add_space(4.0);
                         let chars = item.characters.clone();
+                        let mut toggle_ch: Option<String> = None;
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
                             for ch in &chars {
-                                filter_chip_small(
+                                let active = app.active_characters.contains(ch.as_str());
+                                if filter_chip_small(
                                     ui,
                                     ch,
                                     Color32::from_rgb(60, 160, 120),
-                                    false,
-                                    false,
-                                );
+                                    active,
+                                    true,
+                                ) {
+                                    toggle_ch = Some(ch.clone());
+                                }
                             }
                         });
+                        if let Some(c) = toggle_ch {
+                            app.toggle_character(c);
+                        }
                     });
                 ui.add_space(8.0);
             }

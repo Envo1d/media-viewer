@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "Nexa"
-version = "1.2.402"
+version = "1.2.412"
 dependencies = [
  "crossbeam-channel",
  "directories",

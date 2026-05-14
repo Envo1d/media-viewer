@@ -23,6 +23,7 @@ impl DbService {
         sort: SortOrder,
         field_filter: Option<FieldFilter>,
         tag_filters: Vec<String>,
+        character_filters: Vec<String>,
     ) -> (u64, Receiver<(u64, Vec<Arc<MediaItem>>)>) {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let id = next_id();
@@ -36,6 +37,7 @@ impl DbService {
                 sort,
                 field_filter,
                 tag_filters,
+                character_filters,
                 resp: tx,
             })
             .ok();
@@ -51,6 +53,7 @@ impl DbService {
         sort: SortOrder,
         field_filter: Option<FieldFilter>,
         tag_filters: Vec<String>,
+        character_filters: Vec<String>,
     ) -> (u64, Receiver<(u64, Vec<Arc<MediaItem>>)>) {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let id = next_id();
@@ -65,6 +68,7 @@ impl DbService {
                 sort,
                 field_filter,
                 tag_filters,
+                character_filters,
                 resp: tx,
             })
             .ok();
@@ -76,6 +80,7 @@ impl DbService {
         copyrights: Vec<String>,
         artists: Vec<String>,
         tags: Vec<String>,
+        characters: Vec<String>,
     ) -> Receiver<LibraryStats> {
         let (tx, rx) = crossbeam_channel::bounded(1);
         get_read_db()
@@ -83,6 +88,7 @@ impl DbService {
                 copyrights,
                 artists,
                 tags,
+                characters,
                 resp: tx,
             })
             .ok();

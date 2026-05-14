@@ -55,7 +55,7 @@ fn stat_chip(ui: &mut egui::Ui, label: &str, count: u32, active: bool) -> bool {
     resp.clicked()
 }
 
-fn tag_flow_chip(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
+fn flow_chip(ui: &mut egui::Ui, label: &str, active: bool, accent: Color32) -> bool {
     const H: f32 = 22.0;
     const PX: f32 = 8.0;
     const FONT: f32 = 11.0;
@@ -67,9 +67,10 @@ fn tag_flow_chip(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
+
     if ui.is_rect_visible(rect) {
         let bg = if active {
-            C_BLURPLE
+            accent
         } else if resp.hovered() {
             C_SELECTED
         } else {
@@ -82,6 +83,33 @@ fn tag_flow_chip(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
             .galley(Pos2::new(rect.min.x + PX, ty), galley, tc);
     }
     resp.clicked()
+}
+
+fn multi_select_header(ui: &mut egui::Ui, active_count: usize) -> bool {
+    let mut clear_clicked = false;
+    ui.horizontal(|ui| {
+        ui.add_space(2.0);
+        ui.style_mut().interaction.selectable_labels = false;
+        ui.label(
+            RichText::new(format!("{active_count} active"))
+                .size(10.0)
+                .color(C_BLURPLE),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add(
+                    egui::Label::new(RichText::new("clear all").size(10.0).color(C_TEXT_MUTED))
+                        .sense(Sense::click()),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                clear_clicked = true;
+            }
+        });
+    });
+    ui.add_space(2.0);
+    clear_clicked
 }
 
 pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
@@ -182,43 +210,51 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
         }
     }
 
-    if !app.sidebar_stats.top_tags.is_empty() {
-        section_heading(ui, "TOP TAGS");
-        if !app.active_tags.is_empty() {
-            ui.horizontal(|ui| {
-                ui.add_space(2.0);
-                ui.style_mut().interaction.selectable_labels = false;
-                ui.label(
-                    RichText::new(format!("{} active", app.active_tags.len()))
-                        .size(10.0)
-                        .color(C_BLURPLE),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(
-                            egui::Label::new(
-                                RichText::new("clear all").size(10.0).color(C_TEXT_MUTED),
-                            )
-                            .sense(Sense::click()),
-                        )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
-                        app.active_tags.clear();
-                        app.texture_manager.invalidate_prefetch();
-                        app.refresh_items();
-                    }
-                });
-            });
-            ui.add_space(2.0);
+    if !app.sidebar_stats.top_characters.is_empty() {
+        section_heading(ui, "TOP CHARACTERS");
+
+        if !app.active_characters.is_empty() {
+            if multi_select_header(ui, app.active_characters.len()) {
+                app.active_characters.clear();
+                app.texture_manager.invalidate_prefetch();
+                app.refresh_items();
+            }
         }
-        let mut clicked_tag: Option<String> = None;
-        let tags: Vec<(String, u32)> = app.sidebar_stats.top_tags.clone();
+
+        let mut clicked_ch: Option<String> = None;
+        let characters = app.sidebar_stats.top_characters.clone();
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
-            for (tag, _) in &tags {
+            for (ch, _count) in &characters {
+                let active = app.active_characters.contains(ch.as_str());
+                if flow_chip(ui, ch, active, Color32::from_rgb(60, 160, 120)) {
+                    clicked_ch = Some(ch.clone());
+                }
+            }
+        });
+        if let Some(ch) = clicked_ch {
+            app.toggle_character(ch);
+        }
+    }
+
+    if !app.sidebar_stats.top_tags.is_empty() {
+        section_heading(ui, "TOP TAGS");
+
+        if !app.active_tags.is_empty() {
+            if multi_select_header(ui, app.active_tags.len()) {
+                app.active_tags.clear();
+                app.texture_manager.invalidate_prefetch();
+                app.refresh_items();
+            }
+        }
+
+        let mut clicked_tag: Option<String> = None;
+        let tags = app.sidebar_stats.top_tags.clone();
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+            for (tag, _count) in &tags {
                 let active = app.active_tags.contains(tag.as_str());
-                if tag_flow_chip(ui, tag, active) {
+                if flow_chip(ui, tag, active, C_BLURPLE) {
                     clicked_tag = Some(tag.clone());
                 }
             }

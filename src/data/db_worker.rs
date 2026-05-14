@@ -1,7 +1,7 @@
 use crate::core::models::DbCommand;
 use crate::data::db::Database;
 use crossbeam_channel::Sender;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 static WRITE_DB: OnceLock<Sender<DbCommand>> = OnceLock::new();
 static READ_DB: OnceLock<Sender<DbCommand>> = OnceLock::new();
@@ -93,6 +93,7 @@ fn start_read_worker(write_ready_rx: crossbeam_channel::Receiver<()>) -> Sender<
                             sort,
                             field_filter,
                             tag_filters,
+                            character_filters,
                             resp,
                         } => {
                             let items = db.query(
@@ -102,11 +103,11 @@ fn start_read_worker(write_ready_rx: crossbeam_channel::Receiver<()>) -> Sender<
                                 &sort,
                                 &field_filter,
                                 &tag_filters,
+                                &character_filters,
                             );
-                            let arced: Vec<std::sync::Arc<_>> =
-                                items.into_iter().map(std::sync::Arc::new).collect();
-                            let _ = resp.send((id, arced));
+                            let _ = resp.send((id, items.into_iter().map(Arc::new).collect()));
                         }
+
                         DbCommand::Search {
                             id,
                             query,
@@ -116,6 +117,7 @@ fn start_read_worker(write_ready_rx: crossbeam_channel::Receiver<()>) -> Sender<
                             sort,
                             field_filter,
                             tag_filters,
+                            character_filters,
                             resp,
                         } => {
                             let items = db.search(
@@ -126,19 +128,24 @@ fn start_read_worker(write_ready_rx: crossbeam_channel::Receiver<()>) -> Sender<
                                 &sort,
                                 &field_filter,
                                 &tag_filters,
+                                &character_filters,
                             );
-                            let arced: Vec<std::sync::Arc<_>> =
-                                items.into_iter().map(std::sync::Arc::new).collect();
-                            let _ = resp.send((id, arced));
+                            let _ = resp.send((id, items.into_iter().map(Arc::new).collect()));
                         }
+
                         DbCommand::QueryStatsForValues {
                             copyrights,
                             artists,
                             tags,
+                            characters,
                             resp,
                         } => {
-                            let _ =
-                                resp.send(db.query_stats_for_values(&copyrights, &artists, &tags));
+                            let _ = resp.send(db.query_stats_for_values(
+                                &copyrights,
+                                &artists,
+                                &tags,
+                                &characters,
+                            ));
                         }
 
                         DbCommand::QueryAutocomplete { resp } => {

@@ -174,7 +174,7 @@ pub struct FileDetailInfo {
 
 // DB commands
 pub enum DbCommand {
-    // Main library — writes
+    // Main library - writes
     UpsertBatch(Vec<Arc<MediaItem>>, i64),
 
     DeleteNotSeen(i64),
@@ -200,12 +200,12 @@ pub enum DbCommand {
         item: Arc<MediaItem>,
     },
 
-    // Staging — writes
+    // Staging - writes
     StagingUpsertBatch(Vec<Arc<StagingItem>>, i64),
     StagingDeleteNotSeen(i64),
     StagingDeleteByPath(String),
 
-    // Main library — reads
+    // Main library - reads
     Query {
         id: u64,
         limit: usize,
@@ -242,7 +242,7 @@ pub enum DbCommand {
         resp: Sender<AutocompleteData>,
     },
 
-    // Staging — reads
+    // Staging - reads
     StagingQuery {
         resp: Sender<Vec<Arc<StagingItem>>>,
     },
@@ -365,20 +365,22 @@ pub enum UpdateState {
     Idle,
     Checking,
     UpToDate,
+
     Available {
         version: String,
         download_url: String,
         size_bytes: u64,
     },
+
     Downloading {
         version: String,
         progress: f32,
         bytes_done: u64,
         total_bytes: u64,
     },
+
     ReadyToInstall {
         version: String,
-        staged_path: PathBuf,
     },
     Error(String),
 }

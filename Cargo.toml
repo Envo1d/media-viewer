@@ -1,47 +1,10 @@
-[package]
-name = "Nexa"
-version = "1.2.412"
+[workspace]
+members = ["nexa", "nexa-updater", "tools/gen-keypair", "tools/sign-release"]
+resolver = "2"
+
+[workspace.package]
 edition = "2024"
-
-[dependencies]
-egui = { version = "0.34.2" }
-egui_extras = { version = "0.34.2", features = ["image", "svg"] }
-eframe = { version = "0.34.2", features = ["glow"] }
-image = { version = "0.25.10" }
-webp = { version = "0.3.1" }
-open = { version = "5.3.5" }
-rusqlite = { version = "0.39.0", features = ["bundled", "collation"] }
-rfd = { version = "0.17.2" }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.149" }
-directories = { version = "6.0.0" }
-twox-hash = { version = "2.1.2" }
-crossbeam-channel = { version = "0.5.15" }
-num_cpus = { version = "1.17.0" }
-windows = { version = "0.62.2", features = [
-    "Win32_Foundation",
-    "Win32_Graphics_Gdi",
-    "Win32_Graphics_Dwm",
-    "Win32_UI_Shell",
-    "Win32_UI_Shell_PropertiesSystem",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Controls",
-    "Win32_System_Com",
-    "Win32_System_Com_StructuredStorage",
-    "Win32_System_Threading",
-] }
-ignore = { version = "0.4.25" }
-notify = { version = "8.2.0" }
-trash = { version = "5.2.6" }
-usvg = "0.45.1"
-ureq = { version = "3.3.0", features = ["json"] }
-semver = { version = "1.0.28" }
-tracing = { version = "0.1.44" }
-tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "ansi"] }
-tracing-appender = { version = "0.2.5" }
-
-[build-dependencies]
-winres = { version = "0.1.12" }
+authors = ["Envo1d"]
 
 [profile.release]
 opt-level = "z"

@@ -8,8 +8,7 @@ use crate::data::db_worker::init_db;
 use crate::infra::cache;
 use crate::infra::config::AppConfig;
 use crate::infra::updater::{
-    apply_update_and_restart, cleanup_leftover_files, cleanup_staged_downloads, update_staging_dir,
-    UpdateWorker,
+    cleanup_leftover_files, cleanup_staged_downloads, launch_updater_and_exit, UpdateWorker,
 };
 use crate::infra::window_effects::WindowEffects;
 use crate::ui::colors::{BORDER, C_PRIMARY_BG, C_SECONDARY_BG};
@@ -1302,33 +1301,9 @@ impl MediaApp {
                     self.update_state = state;
                     ctx.request_repaint();
                 }
-                UpdateEvent::DownloadProgress {
-                    bytes_done: ev_bd,
-                    total_bytes: ev_tb,
-                    progress: ev_p,
-                } => {
-                    if let UpdateState::Downloading {
-                        ref mut progress,
-                        bytes_done: ref mut bd,
-                        total_bytes: ref mut tb,
-                        ..
-                    } = self.update_state
-                    {
-                        *progress = ev_p;
-                        *bd = ev_bd;
-                        *tb = ev_tb;
-                    } else if let UpdateState::Available { ref version, .. } =
-                        self.update_state.clone()
-                    {
-                        self.update_state = UpdateState::Downloading {
-                            version: version.clone(),
-                            progress: ev_p,
-                            bytes_done: ev_bd,
-                            total_bytes: ev_tb,
-                        };
-                    }
-                    ctx.request_repaint();
-                }
+                // DownloadProgress is no longer emitted by the checker-only worker.
+                // Arm kept to satisfy exhaustive match.
+                UpdateEvent::DownloadProgress { .. } => {}
             }
         }
     }
@@ -1338,37 +1313,30 @@ impl MediaApp {
         self.update_worker.check();
     }
     pub fn start_update_download(&mut self) {
-        if let UpdateState::Available {
-            ref version,
-            ref download_url,
-            size_bytes,
-        } = self.update_state.clone()
-        {
-            let version = version.clone();
-            let url = download_url.clone();
-            self.update_state = UpdateState::Downloading {
-                version: version.clone(),
-                progress: 0.0,
-                bytes_done: 0,
-                total_bytes: size_bytes,
-            };
-            self.update_worker
-                .download(version, url, update_staging_dir());
-        }
+        // No-op: downloading is handled entirely by nexa-updater.exe.
+        // Use apply_update() (triggered by the "Download & Install" button) instead.
     }
     pub fn cancel_update_download(&mut self) {
-        self.update_worker.cancel_download();
+        // No-op: cancellation is handled inside nexa-updater.exe.
         self.update_state = UpdateState::Idle;
     }
+    /// Spawn nexa-updater.exe and immediately exit.
+    /// Called when the user clicks "Download & Install" in Settings.
     pub fn apply_update(&mut self) {
-        if let UpdateState::ReadyToInstall {
-            ref staged_path, ..
-        } = self.update_state.clone()
-        {
-            if let Err(e) = apply_update_and_restart(staged_path) {
-                self.update_state = UpdateState::Error(e);
-            }
+        let (version, combined_url) = match &self.update_state {
+            UpdateState::Available {
+                version,
+                download_url,
+                ..
+            } => (version.clone(), download_url.clone()),
+            _ => return,
+        };
+
+        if let Err(e) = launch_updater_and_exit(&version, &combined_url) {
+            self.update_state = UpdateState::Error(e);
         }
+        // On success, launch_updater_and_exit calls std::process::exit(0).
+        // This line is never reached.
     }
 }
 

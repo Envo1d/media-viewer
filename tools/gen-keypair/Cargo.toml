@@ -1,0 +1,13 @@
+[package]
+name    = "gen-keypair"
+version = "1.0.0"
+edition = "2024"
+
+[[bin]]
+name = "gen-keypair"
+path = "src/main.rs"
+
+[dependencies]
+ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
+rand          = { version = "0.8" }
+hex           = { version = "0.4" }

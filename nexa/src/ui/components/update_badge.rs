@@ -3,12 +3,11 @@ use crate::ui::app::MediaApp;
 use crate::ui::colors::{
     C_BLURPLE, C_PRIMARY_BG, C_SECONDARY_BG, C_TEXT_HEADER, C_TEXT_MUTED, DANGER,
 };
-use egui::{Color32, FontId, Id, Pos2, Rect, Stroke, StrokeKind, Vec2};
+use egui::{FontId, Id, Pos2, Rect, Stroke, StrokeKind, Vec2};
 
 pub fn draw_update_badge(ui: &egui::Ui, btn_rect: Rect, state: &UpdateState) {
     let color = match state {
         UpdateState::Available { .. } | UpdateState::Downloading { .. } => C_BLURPLE,
-        UpdateState::ReadyToInstall { .. } => Color32::from_rgb(72, 199, 116),
         UpdateState::Error(_) => DANGER,
         _ => return,
     };
@@ -25,11 +24,6 @@ pub fn update_toast(app: &mut MediaApp, ui: &egui::Ui) {
             format!("Update available — v{version}"),
             "Open Settings → Updates to download".to_owned(),
             C_BLURPLE,
-        ),
-        UpdateState::ReadyToInstall { version, .. } => (
-            format!("v{version} ready to install"),
-            "Open Settings → Updates to restart".to_owned(),
-            Color32::from_rgb(72, 199, 116),
         ),
         _ => return,
     };

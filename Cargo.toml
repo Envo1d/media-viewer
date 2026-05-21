@@ -1,5 +1,5 @@
 [workspace]
-members = ["nexa", "nexa-updater", "tools/gen-keypair", "tools/sign-release"]
+members = ["nexa", "nexa-updater", "tools/gen-keypair", "tools/sign-release", "tools/verify-release"]
 resolver = "2"
 
 [workspace.package]

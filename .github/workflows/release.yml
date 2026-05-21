@@ -35,30 +35,28 @@ jobs:
         id: version
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"          # e.g. v1.2.413
-          VER="${TAG#v}"                    # e.g.   1.2.413
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "ver=${VER}" >> "$GITHUB_OUTPUT"
 
       - name: Build nexa-updater.exe
         env:
           NEXA_PUBLIC_KEY: ${{ secrets.NEXA_PUBLIC_KEY }}
+        shell: bash
         run: |
           cargo build --release --target x86_64-pc-windows-msvc -p nexa-updater
-        shell: bash
 
       - name: Build Nexa.exe
+        shell: bash
         run: |
           cargo build --release --target x86_64-pc-windows-msvc -p Nexa
-        shell: bash
 
       - name: Sign Nexa.exe
         env:
           NEXA_SIGNING_KEY: ${{ secrets.NEXA_SIGNING_KEY }}
         shell: bash
         run: |
-          # Write the signing key to a temp file so sign-release can read it.
-          # Using a file avoids the key appearing in `ps` output.
           KEY_FILE="$(mktemp)"
           printf '%s' "$NEXA_SIGNING_KEY" > "$KEY_FILE"
 
@@ -66,12 +64,20 @@ jobs:
             target/x86_64-pc-windows-msvc/release/Nexa.exe \
             "$KEY_FILE"
 
-          # Verify the .sig was produced.
           ls -lh target/x86_64-pc-windows-msvc/release/Nexa.exe.sig
 
-          # Zero the temp file.
           dd if=/dev/zero of="$KEY_FILE" bs=1 count=64 2>/dev/null || true
           rm -f "$KEY_FILE"
+
+      - name: Verify signature
+        env:
+          NEXA_PUBLIC_KEY: ${{ secrets.NEXA_PUBLIC_KEY }}
+        shell: bash
+        run: |
+          cargo run --release -p verify-release -- \
+            target/x86_64-pc-windows-msvc/release/Nexa.exe \
+            target/x86_64-pc-windows-msvc/release/Nexa.exe.sig \
+            "$NEXA_PUBLIC_KEY"
 
       - name: Collect artefacts
         shell: bash
@@ -98,34 +104,3 @@ jobs:
             release-assets/nexa-updater.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Verify signature (sanity check)
-        shell: bash
-        run: |
-          # Build and run the verifier inline using the public key.
-          cat > /tmp/verify_check.py << 'PYEOF'
-          import sys, binascii
-
-          pub_hex = "${{ secrets.NEXA_PUBLIC_KEY }}"
-          pub_bytes = binascii.unhexlify(pub_hex)
-
-          with open("release-assets/Nexa.exe", "rb") as f:
-              exe = f.read()
-          with open("release-assets/Nexa.exe.sig", "rb") as f:
-              sig = f.read()
-
-          assert len(pub_bytes) == 32, "bad public key length"
-          assert len(sig)       == 64, "bad signature length"
-
-          try:
-              from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-              key = Ed25519PublicKey.from_public_bytes(pub_bytes)
-              key.verify(sig, exe)
-              print("Signature verification: OK")
-          except ImportError:
-              print("cryptography library not available — skipping Python verify")
-          except Exception as e:
-              print(f"VERIFICATION FAILED: {e}")
-              sys.exit(1)
-          PYEOF
-          python /tmp/verify_check.py || true

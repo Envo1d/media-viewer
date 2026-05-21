@@ -181,7 +181,7 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
         });
 
     if !app.sidebar_stats.top_artists.is_empty() {
-        section_heading(ui, "TOP ARTISTS");
+        section_heading(ui, "ARTISTS");
         let artists: Vec<(String, u32)> = app.sidebar_stats.top_artists.clone();
         let current_ff = app.field_filter.clone();
         for (artist, count) in &artists {
@@ -196,7 +196,7 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     }
 
     if !app.sidebar_stats.top_copyrights.is_empty() {
-        section_heading(ui, "TOP COPYRIGHTS");
+        section_heading(ui, "COPYRIGHTS");
         let copyrights: Vec<(String, u32)> = app.sidebar_stats.top_copyrights.clone();
         let current_ff = app.field_filter.clone();
         for (cr, count) in &copyrights {
@@ -211,7 +211,7 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     }
 
     if !app.sidebar_stats.top_characters.is_empty() {
-        section_heading(ui, "TOP CHARACTERS");
+        section_heading(ui, "CHARACTERS");
 
         if !app.active_characters.is_empty() {
             if multi_select_header(ui, app.active_characters.len()) {
@@ -238,7 +238,7 @@ pub fn sidebar(app: &mut MediaApp, ui: &mut egui::Ui) {
     }
 
     if !app.sidebar_stats.top_tags.is_empty() {
-        section_heading(ui, "TOP TAGS");
+        section_heading(ui, "TAGS");
 
         if !app.active_tags.is_empty() {
             if multi_select_header(ui, app.active_tags.len()) {

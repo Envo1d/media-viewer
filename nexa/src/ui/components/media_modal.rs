@@ -59,11 +59,36 @@ impl MediaModalState {
         let artist = item.artist.clone();
         let characters = item.characters.clone();
         let tags = item.tags.clone();
+        let video_title = if matches!(item.media_type, MediaType::Video) {
+            let stem = std::path::Path::new(&item.path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_owned();
+            let stem = if !item.artist.is_empty() {
+                let suffix = format!(" [{}]", item.artist);
+                if stem.ends_with(&suffix) {
+                    stem[..stem.len() - suffix.len()].to_owned()
+                } else {
+                    stem
+                }
+            } else {
+                stem
+            };
+            if let Some(dash_pos) = stem.find(" - ") {
+                stem[dash_pos + 3..].to_owned()
+            } else {
+                stem
+            }
+        } else {
+            String::new()
+        };
         *self = Self::default();
         self.copyright = copyright;
         self.artist = artist;
         self.characters = characters;
         self.tags = tags;
+        self.video_title = video_title;
         self.copyright_suggestions = autocomplete.copyrights.clone();
         self.artist_suggestions = autocomplete.artists.clone();
         self.char_suggestions = autocomplete.characters.clone();
@@ -401,7 +426,11 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
     let icons = app.icons.as_ref().unwrap();
 
     let (title, is_distribute, is_video) = match &app.modal_state.mode {
-        Some(MediaModalMode::Edit(_)) => ("Edit Metadata".to_owned(), false, false),
+        Some(MediaModalMode::Edit(item)) => (
+            "Edit Metadata".to_owned(),
+            false,
+            matches!(item.media_type, MediaType::Video),
+        ),
         Some(MediaModalMode::Distribute(item)) => {
             let queue_remaining = app.distribute_queue.len();
             let title = if queue_remaining > 0 {
@@ -488,7 +517,7 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
                                     egui::Label::new(
                                         RichText::new(display).size(12.0).color(C_TEXT),
                                     )
-                                    .truncate(),
+                                        .truncate(),
                                 );
 
                                 ui.with_layout(
@@ -606,7 +635,7 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
                 }
                 ui.add_space(14.0);
 
-                if is_distribute && is_video {
+                if is_video {
                     ui.label(
                         RichText::new("VIDEO TITLE (optional)")
                             .size(10.5)
@@ -630,10 +659,10 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
                                             egui::TextEdit::singleline(
                                                 &mut app.modal_state.video_title,
                                             )
-                                            .hint_text("Leave empty to use original filename…")
-                                            .frame(Frame::NONE)
-                                            .desired_width(f32::INFINITY)
-                                            .text_color(C_TEXT),
+                                                .hint_text("Leave empty to use original filename…")
+                                                .frame(Frame::NONE)
+                                                .desired_width(f32::INFINITY)
+                                                .text_color(C_TEXT),
                                         );
                                     });
                                 });
@@ -647,7 +676,7 @@ pub fn media_modal(app: &mut MediaApp, ui: &egui::Ui) -> ModalAction {
                         egui::Label::new(
                             RichText::new(format!("⚠ {err}")).size(11.0).color(DANGER),
                         )
-                        .wrap(),
+                            .wrap(),
                     );
                     ui.add_space(10.0);
                 }

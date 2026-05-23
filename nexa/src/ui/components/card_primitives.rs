@@ -118,10 +118,15 @@ pub fn draw_info_bar(painter: &egui::Painter, card_rect: Rect, name: &str, card_
 
     let font_sz = (card_size * 0.058).clamp(10.0, 12.5);
     let max_ch = ((card_size * 0.80 / (font_sz * 0.55)) as usize).max(6);
+
+    let stem = std::path::Path::new(name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(name);
     painter.text(
         Pos2::new(card_rect.min.x + 8.0, info_rect.center().y),
         Align2::LEFT_CENTER,
-        truncate(name, max_ch).as_ref(),
+        truncate(stem, max_ch).as_ref(),
         FontId::proportional(font_sz),
         NAME_COLOR,
     );

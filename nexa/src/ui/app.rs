@@ -28,7 +28,9 @@ use crate::ui::icon_registry::IconRegistry;
 use crate::ui::scan_manager::ScanManager;
 use crate::ui::styles::apply_style;
 use crate::ui::texture_manager::TextureManager;
-use crate::utils::file_helpers::{move_file, natural_cmp, parse_suffix_number, resolve_conflict};
+use crate::utils::file_helpers::{
+    build_filename_stem, move_file, natural_cmp, parse_suffix_number, resolve_conflict,
+};
 use crossbeam_channel::Receiver;
 use eframe::Frame;
 use egui::{ColorImage, Context, Margin, Stroke, TextureHandle, Ui};
@@ -589,14 +591,34 @@ impl MediaApp {
         let old_path = item.path.clone();
         let old_copyright = item.copyright.clone();
         let old_artist = item.artist.clone();
+        let old_characters = item.characters.clone();
         let media_type = item.media_type.clone();
 
         let new_copyright = self.modal_state.copyright.trim().to_owned();
         let new_artist = self.modal_state.artist.trim().to_owned();
         let characters = self.modal_state.characters.clone();
         let tags = self.modal_state.tags.clone();
+        let video_title = self.modal_state.video_title.trim().to_owned();
 
         let location_changed = new_copyright != old_copyright || new_artist != old_artist;
+
+        let video_needs_rename = matches!(media_type, MediaType::Video) && !location_changed && {
+            let src = Path::new(&old_path);
+            let current_stem = src
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_owned();
+            let new_stem = build_filename_stem(
+                &media_type,
+                &characters,
+                &new_artist,
+                &video_title,
+                src,
+                &self.config.character_separator,
+            );
+            new_stem != current_stem || characters != old_characters
+        };
 
         let (final_path, final_name) = if location_changed && self.config.library_path.is_some() {
             match self.try_move_library_file(&old_path, &new_copyright, &new_artist, &media_type) {
@@ -606,6 +628,87 @@ impl MediaApp {
                     return;
                 }
             }
+        } else if video_needs_rename {
+            let src = Path::new(&old_path);
+            let ext = src
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let dir = match src.parent() {
+                Some(d) => d.to_path_buf(),
+                None => {
+                    let name = src
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    self.finish_save_edit(
+                        old_path.clone(),
+                        old_path,
+                        name,
+                        new_copyright,
+                        new_artist,
+                        characters,
+                        tags,
+                        media_type,
+                    );
+                    return;
+                }
+            };
+
+            let new_stem = build_filename_stem(
+                &media_type,
+                &characters,
+                &new_artist,
+                &video_title,
+                src,
+                &self.config.character_separator,
+            );
+
+            let current_stem = src
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_owned();
+
+            if new_stem == current_stem {
+                let name = src
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                (old_path.clone(), name)
+            } else {
+                let dest_filename = match resolve_conflict(&dir, &new_stem, &ext) {
+                    ResolvedName::Free(name) => name,
+                    ResolvedName::RenameExisting {
+                        existing_old,
+                        existing_new,
+                        new_file,
+                    } => {
+                        let old_p = dir.join(&existing_old);
+                        let new_p = dir.join(&existing_new);
+                        if let Err(e) = fs::rename(&old_p, &new_p) {
+                            self.modal_state.error =
+                                Some(format!("Could not rename existing file: {e}"));
+                            return;
+                        }
+                        DbService::rename_media_path(
+                            old_p.to_string_lossy().to_string(),
+                            new_p.to_string_lossy().to_string(),
+                            existing_new,
+                        );
+                        new_file
+                    }
+                    ResolvedName::NextSuffix(name) => name,
+                };
+
+                let dest_path = dir.join(&dest_filename);
+                if let Err(e) = move_file(src, &dest_path) {
+                    self.modal_state.error = Some(format!("File rename failed: {e}"));
+                    return;
+                }
+                (dest_path.to_string_lossy().into_owned(), dest_filename)
+            }
         } else {
             let name = Path::new(&old_path)
                 .file_name()
@@ -614,6 +717,30 @@ impl MediaApp {
             (old_path.clone(), name)
         };
 
+        self.finish_save_edit(
+            old_path,
+            final_path,
+            final_name,
+            new_copyright,
+            new_artist,
+            characters,
+            tags,
+            media_type,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_save_edit(
+        &mut self,
+        old_path: String,
+        final_path: String,
+        final_name: String,
+        new_copyright: String,
+        new_artist: String,
+        characters: Vec<String>,
+        tags: Vec<String>,
+        media_type: MediaType,
+    ) {
         if final_path != old_path {
             DbService::rename_media_path(old_path.clone(), final_path.clone(), final_name.clone());
         }
@@ -1204,7 +1331,6 @@ impl MediaApp {
             .unwrap_or("")
             .to_lowercase();
         let stem = {
-            use crate::utils::file_helpers::build_filename_stem;
             build_filename_stem(
                 &staging_item.media_type,
                 &characters,
@@ -1301,8 +1427,7 @@ impl MediaApp {
                     self.update_state = state;
                     ctx.request_repaint();
                 }
-                // DownloadProgress is no longer emitted by the checker-only worker.
-                // Arm kept to satisfy exhaustive match.
+
                 UpdateEvent::DownloadProgress { .. } => {}
             }
         }
@@ -1312,16 +1437,11 @@ impl MediaApp {
         self.update_state = UpdateState::Checking;
         self.update_worker.check();
     }
-    pub fn start_update_download(&mut self) {
-        // No-op: downloading is handled entirely by nexa-updater.exe.
-        // Use apply_update() (triggered by the "Download & Install" button) instead.
-    }
+    pub fn start_update_download(&mut self) {}
     pub fn cancel_update_download(&mut self) {
-        // No-op: cancellation is handled inside nexa-updater.exe.
         self.update_state = UpdateState::Idle;
     }
-    /// Spawn nexa-updater.exe and immediately exit.
-    /// Called when the user clicks "Download & Install" in Settings.
+
     pub fn apply_update(&mut self) {
         let (version, combined_url) = match &self.update_state {
             UpdateState::Available {
@@ -1335,8 +1455,6 @@ impl MediaApp {
         if let Err(e) = launch_updater_and_exit(&version, &combined_url) {
             self.update_state = UpdateState::Error(e);
         }
-        // On success, launch_updater_and_exit calls std::process::exit(0).
-        // This line is never reached.
     }
 }
 

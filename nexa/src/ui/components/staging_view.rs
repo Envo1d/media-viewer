@@ -93,6 +93,7 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
     let mut card_rects: Vec<(usize, Rect)> = Vec::new();
 
     let scroll_out = egui::ScrollArea::vertical()
+        .id_salt(ui.id().with("staging_grid_scroll"))
         .animated(false)
         .scroll_source(ScrollSource::MOUSE_WHEEL)
         .wheel_scroll_multiplier(Vec2::splat(2.5))
@@ -188,12 +189,22 @@ pub fn staging_view(app: &mut MediaApp, ui: &mut Ui) {
     let primary_down = ctx.input(|i| i.pointer.primary_down());
     let primary_released = ctx.input(|i| i.pointer.primary_released());
 
+    let pointer_consumed = ctx.egui_is_using_pointer();
+    let is_dragging_scrollbar = ctx.input(|i| {
+        i.pointer.is_decidedly_dragging()
+            || i.pointer.primary_down()
+                && pointer_pos.map_or(false, |p| p.x >= inner_rect.right() - 20.0)
+    });
+
     let mut new_rb = rb;
-    if !new_rb.active && primary_pressed {
-        let pointer_consumed = ctx.egui_is_using_pointer();
+
+    if !new_rb.active && primary_pressed && !pointer_consumed && !is_dragging_scrollbar {
         if let Some(pp) = pointer_pos {
             let on_card = card_rects.iter().any(|(_, r)| r.contains(pp));
-            if !pointer_consumed && inner_rect.contains(pp) && !on_card {
+
+            let is_on_scrollbar_area = pp.x >= inner_rect.right() - 18.0;
+
+            if inner_rect.contains(pp) && !on_card && !is_on_scrollbar_area {
                 new_rb.active = true;
                 new_rb.start = pp;
                 new_rb.current = pp;

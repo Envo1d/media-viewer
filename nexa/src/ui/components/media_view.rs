@@ -87,6 +87,7 @@ pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
     let mut toggle_paths: Vec<(usize, String)> = Vec::new();
 
     let out = egui::ScrollArea::vertical()
+        .id_salt(ui.id().with("media_grid_scroll"))
         .animated(false)
         .scroll_source(ScrollSource::MOUSE_WHEEL)
         .wheel_scroll_multiplier(Vec2::splat(2.5))
@@ -182,9 +183,10 @@ pub fn media_view(app: &mut MediaApp, ui: &mut Ui) {
 
     let mut new_rb = rb;
     if !new_rb.active && primary_pressed {
+        let pointer_consumed = ctx.egui_is_using_pointer();
         if let Some(pp) = pointer_pos {
             let on_card = card_rects.iter().any(|(_, r)| r.contains(pp));
-            if inner_rect.contains(pp) && !on_card {
+            if !pointer_consumed && inner_rect.contains(pp) && !on_card {
                 new_rb.active = true;
                 new_rb.start = pp;
                 new_rb.current = pp;

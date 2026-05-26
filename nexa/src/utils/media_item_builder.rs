@@ -7,8 +7,10 @@ use std::time::UNIX_EPOCH;
 
 pub fn media_type_from_ext(ext: &str) -> Option<MediaType> {
     match ext {
-        "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" => Some(MediaType::Video),
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" => Some(MediaType::Image),
+        "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" => Some(MediaType::Video),
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "avif" => {
+            Some(MediaType::Image)
+        }
         _ => None,
     }
 }

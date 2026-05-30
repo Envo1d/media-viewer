@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="140" src="assets/icons/icon.png" alt="Nexa Logo">
+  <img width="140" src="nexa/assets/icons/icon.png" alt="Nexa Logo">
 </div>
 
 <h1 align="center">Nexa</h1>
